@@ -1,0 +1,11 @@
+requests
+PySide6
+qtpy
+pyyaml
+huggingface_hub
+hf_xet
+tqdm
+tomli; python_version < "3.11"
+
+
+
