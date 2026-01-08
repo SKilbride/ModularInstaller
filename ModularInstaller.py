@@ -2,86 +2,44 @@ import argparse
 import json
 import os
 import sys
+import zipfile
 from pathlib import Path
 from datetime import datetime
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from core.workflow_manager import WorkflowManager
+from core.manifest_handler import ManifestHandler
 from core.package_manager import PackageManager
-from core.gui import run_gui
 
 
-class YamlObject:
-    """Helper class for reading YAML configuration files."""
-    def __init__(self, yaml_path):
-        import yaml
-        self.yaml_path = yaml_path
-        self.data = None
-        self.load()
+def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> Path:
+    """
+    Extract manifest.json from ZIP package.
+    Returns path to extracted manifest.json.
+    """
+    print(f"[1/3] Extracting manifest from package...")
 
-    def load(self):
-        import yaml
-        if os.path.exists(self.yaml_path):
-            with open(self.yaml_path, 'r', encoding='utf-8') as f:
-                self.data = yaml.safe_load(f) or {}
-        else:
-            self.data = {}
+    # Create temporary extraction directory
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    def exists(self):
-        return os.path.exists(self.yaml_path)
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        # Look for manifest.json at root or in common locations
+        manifest_locations = ['manifest.json', 'manifest.yaml', 'manifest.yml']
+        manifest_file = None
 
-    def get(self, key, default=None):
-        if self.data is None:
-            self.load()
-        keys = key.split('.')
-        value = self.data
-        for k in keys:
-            if isinstance(value, dict):
-                value = value.get(k)
-            else:
-                return default
-            if value is None:
-                return default
-        return value
+        for loc in manifest_locations:
+            if loc in zf.namelist():
+                manifest_file = loc
+                break
 
+        if not manifest_file:
+            raise FileNotFoundError("No manifest.json/yaml found in ZIP package")
 
-def load_baseconfig(comfy_path, temp_dir=None, log_file=None):
-    """Load configuration from baseconfig.json if it exists."""
-    baseconfig_path = Path(comfy_path) / "baseconfig.json"
-    paths_to_check = [baseconfig_path]
-    if temp_dir:
-        paths_to_check.append(Path(temp_dir) / "baseconfig.json")
+        # Extract manifest
+        zf.extract(manifest_file, temp_dir)
+        manifest_path = temp_dir / manifest_file
 
-    selected_path = None
-    for path in paths_to_check:
-        if path.exists():
-            selected_path = path
-            break
-
-    if not selected_path:
-        print(f"Info: baseconfig.json not found. Using defaults.")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Info: baseconfig.json not found. Using defaults.\n")
-        return {}
-
-    try:
-        with open(selected_path, 'r', encoding='utf-8') as f:
-            baseconfig = json.load(f)
-        if not isinstance(baseconfig, dict):
-            raise ValueError("Invalid baseconfig.json")
-
-        print(f"Loaded baseconfig from: {selected_path}")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Loaded baseconfig from {selected_path}\n")
-        return baseconfig
-    except Exception as e:
-        print(f"Failed to load baseconfig: {e}. Using defaults.")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Failed to load baseconfig: {e}\n")
-        return {}
+        print(f"✓ Manifest extracted to: {manifest_path}")
+        return manifest_path
 
 
 def main():
@@ -90,67 +48,72 @@ def main():
         sys.stdout.reconfigure(encoding='utf-8')
 
     parser = argparse.ArgumentParser(
-        description="ComfyUI Modular Installer - Install workflows, models, and custom nodes from packages."
+        description="ComfyUI Modular Installer - Install models, custom nodes, and assets from manifest files."
     )
-    parser.add_argument("-c", "--comfy_path", type=str, help="Path to ComfyUI folder")
-    parser.add_argument("-w", "--workflow_path", type=str, help="Path to workflow ZIP or folder")
-    parser.add_argument("-e", "--extract_minimal", action="store_true",
-                        help="Extract only JSON files (assumes models/nodes already installed)")
+    parser.add_argument("-c", "--comfy_path", type=str, required=True,
+                        help="Path to ComfyUI installation folder")
+    parser.add_argument("-m", "--manifest", type=str,
+                        help="Path to manifest.json/yaml file or ZIP package containing manifest")
     parser.add_argument("-l", "--log", nargs='?', const=True, default=False,
                         help="Enable logging to file")
     parser.add_argument("-t", "--temp_path", type=str,
                         help="Alternate temporary directory for extraction")
-    parser.add_argument("--force-extract", "-f", action="store_true",
-                        help="Force re-extraction of all files even if they already exist")
-    parser.add_argument("--gui", action="store_true",
-                        help="Show a Qt-based GUI to pick installation options")
-    parser.add_argument("--verify-only", action="store_true",
-                        help="Only verify the package contents without installing")
+    parser.add_argument("--force", "-f", action="store_true",
+                        help="Force re-download/installation of all items")
+    parser.add_argument("--required-only", action="store_true",
+                        help="Only install items marked as required")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip checksum verification for downloads")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview actions without executing downloads")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Disable parallel downloads (use sequential mode)")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of parallel download workers (default: 4)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="Disable resume capability for interrupted downloads")
     parser.add_argument("--list-contents", action="store_true",
-                        help="List package contents without extracting")
+                        help="List manifest contents without installing")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="Clean up partial download files and exit")
 
     args = parser.parse_args()
 
-    # === GUI MODE ===
-    if args.gui:
-        comfy_path_arg = Path(args.comfy_path).resolve() if args.comfy_path else None
-        workflow_path_arg = Path(args.workflow_path).resolve() if args.workflow_path else None
-        try:
-            # Note: GUI needs to be updated to remove benchmark-specific options
-            gui_result = run_gui(
-                comfy_path=comfy_path_arg,
-                workflow_path=workflow_path_arg,
-                extract_minimal=args.extract_minimal,
-                force_extract=args.force_extract
-            )
-        except SystemExit:
-            sys.exit(0)
+    if not args.manifest and not args.cleanup:
+        parser.error("--manifest (-m) is required unless using --cleanup")
 
-        # Apply GUI results
-        args.comfy_path = str(gui_result['comfy_path'])
-        args.workflow_path = str(gui_result['workflow_path'])
-        args.extract_minimal = gui_result.get('extract_minimal', False)
-        args.force_extract = gui_result.get('force_extract', False)
-    else:
-        if not args.comfy_path:
-            parser.error("--comfy_path (-c) is required when not using --gui.")
-        if not args.workflow_path:
-            parser.error("--workflow_path (-w) is required when not using --gui.")
+    comfy_path = Path(args.comfy_path).resolve()
+
+    # Validate ComfyUI path
+    if not comfy_path.exists():
+        print(f"❌ ERROR: ComfyUI path does not exist: {comfy_path}")
+        return 1
+
+    # === CLEANUP MODE ===
+    if args.cleanup:
+        print("Cleaning up partial downloads...")
+        handler = ManifestHandler(
+            manifest_path=comfy_path / "manifest.json",  # Dummy path
+            comfy_path=comfy_path,
+            resume_downloads=True
+        )
+        handler.cleanup_partial_downloads()
+        return 0
 
     # === LOG FILE ===
     log_file = None
     if args.log is not False:
-        workflow_basename = Path(args.workflow_path).stem
+        manifest_basename = Path(args.manifest).stem
         timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
-        log_file = Path(args.log).resolve() if args.log is not True else Path(f"{workflow_basename}_install_{timestamp}.txt").resolve()
+        log_file = Path(args.log).resolve() if args.log is not True else Path(f"{manifest_basename}_install_{timestamp}.txt").resolve()
         if log_file.is_dir():
-            log_file = log_file / f"{workflow_basename}_install_{timestamp}.txt"
+            log_file = log_file / f"{manifest_basename}_install_{timestamp}.txt"
         print(f"Logging to: {log_file}")
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"Installation started: {datetime.now()}\n")
 
-    workflow_path = Path(args.workflow_path).resolve()
-    comfy_path = Path(args.comfy_path).resolve()
+    manifest_path = Path(args.manifest).resolve()
+    temp_dir = None
     package_manager = None
 
     try:
@@ -158,98 +121,114 @@ def main():
         print("ComfyUI Modular Installer")
         print("=" * 60)
         print(f"ComfyUI Path: {comfy_path}")
-        print(f"Package: {workflow_path}")
+        print(f"Manifest: {manifest_path}")
         print("=" * 60 + "\n")
+
+        # === HANDLE MANIFEST SOURCE ===
+        if manifest_path.suffix.lower() == '.zip':
+            # Extract manifest from ZIP package
+            temp_dir = Path(args.temp_path) / f"manifest_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}" if args.temp_path else comfy_path / f"temp_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            manifest_path = extract_manifest_from_zip(manifest_path, temp_dir)
+
+            # Also use PackageManager to extract bundled files if present
+            print("\n[2/3] Extracting bundled files from package...")
+            package_manager = PackageManager(
+                zip_path=Path(args.manifest).resolve(),
+                comfy_path=comfy_path,
+                temp_path=args.temp_path,
+                extract_minimal=False,
+                force_extract=args.force,
+                log_file=log_file
+            )
+            # PackageManager will handle extraction of bundled files
+            try:
+                package_manager.extract_zip()
+                print("✓ Bundled files extracted")
+            except Exception as e:
+                print(f"⚠ No bundled files in package or extraction failed: {e}")
+
+        elif manifest_path.suffix.lower() in ['.json', '.yaml', '.yml']:
+            print(f"Using manifest: {manifest_path}")
+        else:
+            raise ValueError("Manifest must be .json, .yaml, .yml, or .zip file")
+
+        # === INITIALIZE MANIFEST HANDLER ===
+        print("\n[2/3] Loading manifest...")
+        handler = ManifestHandler(
+            manifest_path=manifest_path,
+            comfy_path=comfy_path,
+            log_file=log_file,
+            max_workers=args.workers,
+            resume_downloads=not args.no_resume
+        )
+
+        # Load and validate manifest
+        handler.load_manifest()
+        handler.validate_manifest()
+
+        # Print summary
+        handler.print_summary()
 
         # === LIST CONTENTS MODE ===
         if args.list_contents:
-            if workflow_path.suffix.lower() == '.zip':
-                import zipfile
-                print("\nPackage contents:")
-                print("-" * 60)
-                with zipfile.ZipFile(workflow_path, 'r') as zf:
-                    for info in zf.infolist():
-                        if not info.is_dir():
-                            size_mb = info.file_size / (1024 * 1024)
-                            print(f"  {info.filename:<50} {size_mb:>8.2f} MB")
-                print("-" * 60)
-                return
-            else:
-                print("Error: --list-contents only works with ZIP files")
-                return
-
-        # === HANDLE WORKFLOW PATH ===
-        if workflow_path.is_dir():
-            workflow_file = workflow_path / "workflow.json"
-            if not workflow_file.exists():
-                raise FileNotFoundError(f"workflow.json not found in {workflow_path}")
-            workflow_path = workflow_file
-            print(f"Using workflow: {workflow_path}")
-
-        elif workflow_path.suffix.lower() == '.zip':
-            print("\n[1/3] Extracting package...")
-            package_manager = PackageManager(
-                zip_path=workflow_path,
-                comfy_path=comfy_path,
-                temp_path=args.temp_path,
-                extract_minimal=args.extract_minimal,
-                force_extract=args.force_extract,
-                log_file=log_file
-            )
-            workflow_path = package_manager.extract_zip()
-            print(f"✓ Package extracted to: {workflow_path.parent}")
-
-        elif workflow_path.suffix.lower() == '.json':
-            print(f"Using standalone workflow: {workflow_path}")
-        else:
-            raise ValueError("Invalid workflow path: must be .zip, .json, or directory")
-
-        # === LOAD AND VALIDATE WORKFLOW ===
-        print("\n[2/3] Loading workflow...")
-        workflow_manager = WorkflowManager(workflow_path=workflow_path, log_file=log_file)
-        workflow_manager.load_workflow()
-        print(f"✓ Workflow loaded successfully")
-
-        # === VERIFY MODE ===
-        if args.verify_only:
-            print("\n[3/3] Verification complete")
             print("\n" + "=" * 60)
-            print("VERIFICATION SUMMARY")
+            print("MANIFEST ITEMS")
             print("=" * 60)
-            print(f"✓ Package structure is valid")
-            print(f"✓ Workflow JSON is valid")
-            if package_manager:
-                if package_manager.has_manifest:
-                    print(f"✓ Manifest detected and processed")
-                if package_manager.custom_nodes_extracted:
-                    print(f"✓ Custom nodes detected")
+            for item in handler.manifest['items']:
+                print(f"\n{item['name']}")
+                print(f"  Type: {item['type']}")
+                print(f"  Source: {item['source']}")
+                if 'path' in item:
+                    print(f"  Destination: {item['path']}")
+                if item.get('required'):
+                    print(f"  Required: Yes")
+                if item.get('size_mb'):
+                    print(f"  Size: {item['size_mb']:.1f} MB")
             print("=" * 60 + "\n")
-            return
+            return 0
+
+        # === DOWNLOAD/INSTALL ITEMS ===
+        print("\n[3/3] Installing items...")
+        handler.download_items(
+            skip_existing=not args.force,
+            required_only=args.required_only,
+            verify_checksums=not args.no_verify,
+            dry_run=args.dry_run,
+            parallel=not args.sequential
+        )
+
+        if args.dry_run:
+            print("\n✓ Dry run completed (no changes made)")
+            return 0
 
         # === INSTALLATION SUMMARY ===
-        print("\n[3/3] Installation complete!")
         print("\n" + "=" * 60)
-        print("INSTALLATION SUMMARY")
+        print("INSTALLATION COMPLETE")
         print("=" * 60)
 
-        package_name = workflow_path.stem if not package_manager else package_manager.package_name
+        package_info = handler.manifest.get('package', {})
+        package_name = package_info.get('name', 'unknown')
+
         print(f"Package: {package_name}")
+        if package_info.get('version'):
+            print(f"Version: {package_info['version']}")
         print(f"ComfyUI Path: {comfy_path}")
 
-        if package_manager:
-            if package_manager.has_manifest:
-                print(f"✓ Models downloaded via manifest")
-            if package_manager.custom_nodes_extracted:
-                print(f"✓ Custom nodes installed")
-                print(f"\n⚠️  IMPORTANT: Restart ComfyUI to load new custom nodes")
-            if package_manager.extractor:
-                extracted_count = len(package_manager.extractor.extracted_files)
-                skipped_count = len(package_manager.extractor.skipped_files)
-                print(f"✓ Files extracted: {extracted_count}")
-                if skipped_count > 0:
-                    print(f"  Files skipped (already up-to-date): {skipped_count}")
+        # Print what was downloaded/installed
+        if handler.downloaded_items:
+            print(f"\n✓ Items installed: {len(handler.downloaded_items)}")
+            for item in handler.downloaded_items[:5]:  # Show first 5
+                print(f"  - {item['name']}")
+            if len(handler.downloaded_items) > 5:
+                print(f"  ... and {len(handler.downloaded_items) - 5} more")
 
-        print(f"✓ Workflow saved to: {workflow_path}")
+        if handler.skipped_items:
+            print(f"\n⊘ Items skipped (already up-to-date): {len(handler.skipped_items)}")
+
+        # Check if restart is needed
+        if handler.custom_nodes_were_downloaded():
+            print(f"\n⚠️  IMPORTANT: Restart ComfyUI to load new custom nodes")
+
         print("=" * 60 + "\n")
 
         if log_file:
@@ -262,22 +241,31 @@ def main():
         if log_file:
             with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"Installation interrupted: {datetime.now()}\n")
+        return 1
     except Exception as e:
         print(f"\n\n❌ ERROR: {e}")
         if log_file:
             with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"ERROR: {e}\n")
-        raise
+        import traceback
+        traceback.print_exc()
+        return 1
     finally:
         # Cleanup temporary files
-        if package_manager:
+        if temp_dir and temp_dir.exists():
             print("\nCleaning up temporary files...")
-            package_manager.cleanup()
-            print("✓ Cleanup complete")
+            import shutil
+            try:
+                shutil.rmtree(temp_dir)
+                print("✓ Cleanup complete")
+            except Exception as e:
+                print(f"⚠ Cleanup warning: {e}")
 
         if log_file:
             print(f"\nLog file: {log_file}")
 
+    return 0
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

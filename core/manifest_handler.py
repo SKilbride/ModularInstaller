@@ -17,10 +17,10 @@ import time
 
 
 class ManifestHandler:
-    """Handles benchmark package manifests for downloading and installing resources."""
-    
-    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local']
-    SUPPORTED_TYPES = ['workflow', 'config', 'model', 'custom_node', 'input', 'script']
+    """Handles manifest-based installation of ComfyUI resources."""
+
+    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip']
+    SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config']
     
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None, 
                  max_workers: int = 4, resume_downloads: bool = True):
@@ -115,7 +115,24 @@ class ManifestHandler:
         for item in self.manifest['items']:
             if item['source'] == 'bundled':
                 continue
-            
+
+            # Handle pip packages (no file path)
+            if item['source'] == 'pip':
+                existing[item['name']] = {
+                    'exists': False,
+                    'valid': False,
+                    'needs_download': True,
+                    'reason': 'pip_package',
+                    'partial_exists': False,
+                    'partial_size': 0
+                }
+                continue
+
+            # Skip items without a path
+            if 'path' not in item:
+                self.log(f"⚠ Item {item['name']} has no path, skipping check", "WARNING")
+                continue
+
             path = self.comfy_path / item['path']
             
             status = {
@@ -280,13 +297,12 @@ class ManifestHandler:
     def _download_item(self, item: Dict, verify_checksum: bool = True):
         """
         Download a single item based on its source type.
-        
+
         Note: Checksum verification is only performed for items with type='model'.
-        Custom nodes, configs, inputs, etc. don't use SHA256 verification.
         """
         # Only verify checksums for model types
         should_verify = verify_checksum and item.get('type') == 'model'
-        
+
         if item['source'] == 'huggingface':
             self._download_from_huggingface(item, verify_checksum=should_verify)
         elif item['source'] == 'git':
@@ -295,6 +311,8 @@ class ManifestHandler:
             self._download_from_url(item, verify_checksum=should_verify)
         elif item['source'] == 'local':
             self._copy_from_local(item)
+        elif item['source'] == 'pip':
+            self._install_pip_package(item)
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
     
@@ -308,6 +326,8 @@ class ManifestHandler:
             return f"URL: {item['url']}"
         elif item['source'] == 'local':
             return f"Local: {item.get('source_path', 'unknown')}"
+        elif item['source'] == 'pip':
+            return f"PyPI: {item.get('package', item['name'])}"
         return item['source']
     
     def _get_partial_path(self, target_path: str) -> Path:
@@ -728,7 +748,31 @@ class ManifestHandler:
                 shutil.copy2(source, dest)
         
         self.log(f"✓ {item['name']} copied")
-    
+
+    def _install_pip_package(self, item: Dict):
+        """Install a Python package via pip."""
+        package_spec = item.get('package', item['name'])
+        version = item.get('version')
+
+        if version:
+            package_spec = f"{package_spec}=={version}"
+
+        self.log(f"↓ Installing Python package: {package_spec}...")
+
+        try:
+            subprocess.run([
+                sys.executable, '-m', 'pip', 'install', package_spec
+            ], check=True, capture_output=True, text=True)
+            self.log(f"✓ {item['name']} installed via pip")
+            self.downloaded_items.append(item)
+        except subprocess.CalledProcessError as e:
+            error_msg = e.stderr if e.stderr else str(e)
+            self.log(f"✗ Pip install failed: {error_msg}", "ERROR")
+            if item.get('required', False):
+                raise
+            else:
+                self.log(f"⚠ Optional package {item['name']} failed to install", "WARNING")
+
     def _verify_checksum(self, file_path: Path, expected_sha256: str) -> bool:
         """Verify file SHA256 checksum with progress bar for large files."""
         if not file_path.exists():

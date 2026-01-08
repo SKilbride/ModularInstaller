@@ -1,333 +1,510 @@
 # ComfyUI Modular Installer
 
 ## Overview
-The ComfyUI Modular Installer is a flexible system for installing ComfyUI workflows, models, custom nodes, and assets from packaged distributions. It automates the extraction and installation process, handling dependencies, model downloads, and custom node setup.
+The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI models, custom nodes, and assets. It uses declarative manifest files to specify what should be downloaded and where, supporting multiple sources including HuggingFace, Git repositories, direct URLs, and local files.
 
-Key features:
-- Installs workflow packages (ZIP archives) containing models, nodes, and assets
-- Smart extraction that skips already-installed files
-- Manifest support for downloading models from HuggingFace, Git repositories, and URLs
-- Automatic custom node installation with dependency management
-- Supports both GUI and command-line interfaces
-- Validates package structure and workflow JSON before installation
+### Key Features
+- **Manifest-driven**: Declare all dependencies in a single JSON/YAML file
+- **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, and pip packages
+- **Smart caching**: Skip already-downloaded files and verify checksums
+- **Parallel downloads**: Download multiple items simultaneously for faster installation
+- **Resume capability**: Continue interrupted downloads from where they left off
+- **Bundled packages**: Include files directly in ZIP packages alongside the manifest
 
 ## Prerequisites
 1. A working ComfyUI installation
-2. Git (for cloning repositories and custom nodes)
+2. Git (for cloning repositories)
 3. Python 3.8 or higher
+4. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
 
-## Installation/Setup
-1. Install ComfyUI (portable, manual installation, or desktop app version)
-2. Open a command prompt, PowerShell, or terminal in the ComfyUI folder
-3. Clone this repository:
+## Installation
+1. Clone this repository:
    ```bash
    git clone https://github.com/SKilbride/ModularInstaller
-   ```
-4. Navigate to the ModularInstaller directory:
-   ```bash
    cd ModularInstaller
    ```
-5. Install dependencies (use the Python environment from your ComfyUI installation):
+
+2. Install dependencies:
    ```bash
    python -m pip install -r requirements.txt
    ```
 
-## Usage
+## Quick Start
 
-### GUI Mode
-The GUI provides a visual interface for selecting installation options:
-
+### Basic Usage
 ```bash
-python ModularInstaller.py --gui
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json
 ```
 
-**ComfyUI Folder:**
-> Select the "ComfyUI" folder of your ComfyUI installation
-
-**Workflow Package:**
-> Select the workflow ZIP package to install, or a workflow JSON file
-
-**Options:**
-- **Extract Minimal**: Only extract workflow JSON files (assumes models/nodes already installed)
-- **Force Extract**: Re-extract all files even if they already exist
-- **Verify Only**: Check package validity without installing
-
-### CLI Mode
-Install packages using command-line options:
-
+### With ZIP Package
 ```bash
-python ModularInstaller.py -c /path/to/ComfyUI -w /path/to/package.zip
+python ModularInstaller.py -c /path/to/ComfyUI -m package.zip
 ```
 
-#### Common Examples
-
-**Basic installation:**
+### Preview Before Installing
 ```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip
-```
-
-**Installation with logging:**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip -l install.log
-```
-
-**Force reinstallation of all files:**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip -f
-```
-
-**Minimal extraction (workflow files only):**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip -e
-```
-
-**List package contents without installing:**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip --list-contents
-```
-
-**Verify package without installing:**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip --verify-only
-```
-
-**Use alternate temporary directory:**
-```bash
-python ModularInstaller.py -c ./ComfyUI -w workflow_package.zip -t /mnt/temp
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json --list-contents
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json --dry-run
 ```
 
 ## Command Line Arguments
 
 ### Required Arguments
-- **`-c, --comfy_path`** - Path to ComfyUI installation directory (not needed with `--gui`)
-- **`-w, --workflow_path`** - Path to workflow ZIP package, JSON file, or directory (not needed with `--gui`)
+- **`-c, --comfy_path PATH`** - Path to ComfyUI installation directory
+- **`-m, --manifest PATH`** - Path to manifest.json/yaml file or ZIP package
 
 ### Optional Arguments
-- **`--gui`** - Launch the graphical user interface
-- **`-e, --extract_minimal`** - Extract only JSON files (assumes models/nodes already installed)
-- **`-f, --force-extract`** - Force re-extraction of all files even if they exist
-- **`-l, --log [FILE]`** - Enable logging to file (auto-generated name if no file specified)
-- **`-t, --temp_path PATH`** - Alternate temporary directory for extraction
-- **`--verify-only`** - Verify package structure without installing
-- **`--list-contents`** - List package contents without extracting
-- **`-h, --help`** - Show help message
+- **`-f, --force`** - Force re-download/installation of all items
+- **`-l, --log [FILE]`** - Enable logging to file (auto-generated name if not specified)
+- **`-t, --temp_path PATH`** - Alternate temporary directory
+- **`--required-only`** - Only install items marked as required
+- **`--no-verify`** - Skip checksum verification
+- **`--dry-run`** - Preview actions without downloading
+- **`--sequential`** - Disable parallel downloads
+- **`--workers N`** - Number of parallel workers (default: 4)
+- **`--no-resume`** - Disable resume capability
+- **`--list-contents`** - List manifest items without installing
+- **`--cleanup`** - Clean up partial download files and exit
 
-## Package Format
+## Manifest Format
 
-Workflow packages are ZIP archives containing all necessary files, models, and configurations. Files must be at the root level (no extra folders in the ZIP).
+The manifest is a JSON or YAML file that declares what to install.
 
-### Required Files
+### Basic Structure
 
-| File | Description |
-|------|-------------|
-| **workflow.json** | ComfyUI workflow in API format (required) |
-
-### Optional Files
-
-| File | Description |
-|------|-------------|
-| **warmup.json** | Simplified workflow variant (optional) |
-| **baseconfig.json** | Package configuration settings (optional) |
-| **manifest.json** | Model download manifest for HuggingFace/Git/URLs (optional) |
-| **pre.py** | Python script to run before installation (optional) |
-| **post.py** | Python script to run after installation (optional) |
-
-### Folder Structure
-
-| Folder | Description |
-|--------|-------------|
-| **ComfyUI/** | Contains subfolders/files to install into ComfyUI (models, custom_nodes, etc.) |
-
-### Example Package Structure
-```
-package.zip
-├── workflow.json           # Required: Main workflow
-├── warmup.json            # Optional: Simplified workflow
-├── baseconfig.json        # Optional: Configuration
-├── manifest.json          # Optional: Model download manifest
-├── pre.py                 # Optional: Pre-installation script
-├── post.py                # Optional: Post-installation script
-└── ComfyUI/               # Installation root
-    ├── models/
-    │   ├── checkpoints/
-    │   │   └── model.safetensors
-    │   ├── vae/
-    │   │   └── vae.safetensors
-    │   └── loras/
-    │       └── lora.safetensors
-    ├── custom_nodes/
-    │   └── custom_node_name/
-    │       ├── __init__.py
-    │       ├── requirements.txt
-    │       └── pyproject.toml
-    └── input/
-        └── input_image.jpg
-```
-
-**Important Notes:**
-- Zip the contents directly (no top-level folder in the ZIP)
-- Models, LoRAs, and custom nodes go in their respective folders under `ComfyUI/`
-- Input assets (images, videos) should be referenced from the `input/` folder in workflows
-- Custom nodes with dependencies can include `requirements.txt` for automatic installation
-
-## Manifest Support
-
-The installer supports manifest files for downloading models from external sources:
-
-### Manifest Format (manifest.json)
 ```json
 {
-  "models": [
+  "package": {
+    "name": "My ComfyUI Setup",
+    "version": "1.0.0",
+    "description": "Complete setup for image generation"
+  },
+  "metadata": {
+    "total_size_mb": 1500,
+    "estimated_time": "5-10 minutes",
+    "tags": ["sdxl", "flux", "video"],
+    "details": "Includes SDXL models and custom nodes"
+  },
+  "items": [
     {
-      "type": "huggingface",
-      "repo": "black-forest-labs/FLUX.1-dev",
-      "filename": "flux1-dev.safetensors",
-      "destination": "models/checkpoints/flux1-dev.safetensors",
-      "sha256": "optional-checksum-here"
-    },
-    {
-      "type": "url",
-      "url": "https://example.com/model.safetensors",
-      "destination": "models/vae/model.safetensors"
-    },
-    {
-      "type": "git",
-      "repo": "https://github.com/username/repo.git",
-      "destination": "custom_nodes/repo_name"
+      "name": "SDXL Base Model",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "file": "sd_xl_base_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_base_1.0.safetensors",
+      "sha256": "abc123...",
+      "size_mb": 6938,
+      "required": true
     }
   ]
 }
 ```
 
-### Supported Download Types
-- **huggingface**: Download from HuggingFace Hub
-- **url**: Direct download from URL
-- **git**: Clone Git repository
+### Item Types
 
-The installer automatically:
-- Downloads missing files
-- Verifies checksums (if provided)
-- Skips already-downloaded files (unless `--force-extract` is used)
-- Handles parallel downloads for faster installation
+Each item in the `items` array represents something to install:
 
-## Output and Logging
+| Type | Description |
+|------|-------------|
+| `model` | Model files (checkpoints, LoRAs, VAE, etc.) |
+| `custom_node` | ComfyUI custom nodes (typically Git repositories) |
+| `file` | Generic file to download |
+| `directory` | Directory to download/clone |
+| `pip_package` | Python package to install via pip |
+| `config` | Configuration file |
 
-The installer provides clear output during installation:
+### Source Types
+
+#### 1. HuggingFace Hub
+
+Download files from HuggingFace repositories:
+
+```json
+{
+  "name": "FLUX.1 Dev Model",
+  "type": "model",
+  "source": "huggingface",
+  "repo": "black-forest-labs/FLUX.1-dev",
+  "file": "flux1-dev.safetensors",
+  "path": "models/checkpoints/flux1-dev.safetensors",
+  "sha256": "optional-checksum",
+  "size_mb": 23800,
+  "required": true,
+  "gated": true
+}
+```
+
+**Fields:**
+- `repo` - HuggingFace repository ID (e.g., "username/repo-name")
+- `file` - Filename in the repository
+- `path` - Destination path relative to ComfyUI directory
+- `remote_path` - (Optional) If file is in a subdirectory, full path like "repo/tree/main/subfolder"
+- `gated` - (Optional) Set to `true` if model requires license acceptance
+- `sha256` or `sha` - (Optional) SHA256 checksum for verification
+
+#### 2. Git Repository
+
+Clone Git repositories (perfect for custom nodes):
+
+```json
+{
+  "name": "ComfyUI Manager",
+  "type": "custom_node",
+  "source": "git",
+  "url": "https://github.com/ltdrdata/ComfyUI-Manager.git",
+  "path": "custom_nodes/ComfyUI-Manager",
+  "ref": "main",
+  "install_requirements": true,
+  "required": true
+}
+```
+
+**Fields:**
+- `url` - Git repository URL
+- `path` - Destination path relative to ComfyUI directory
+- `ref` - (Optional) Branch, tag, or commit (default: "main")
+- `install_requirements` - (Optional) Run `pip install -r requirements.txt` after cloning
+
+#### 3. Direct URL
+
+Download files from direct URLs:
+
+```json
+{
+  "name": "Custom VAE",
+  "type": "model",
+  "source": "url",
+  "url": "https://example.com/models/vae.safetensors",
+  "path": "models/vae/vae.safetensors",
+  "sha256": "optional-checksum",
+  "executable": false
+}
+```
+
+**Fields:**
+- `url` - Direct download URL
+- `path` - Destination path relative to ComfyUI directory
+- `executable` - (Optional) Make file executable after download (Linux/Mac)
+- `sha256` or `sha` - (Optional) SHA256 checksum for verification
+
+#### 4. Local File
+
+Copy files from local filesystem:
+
+```json
+{
+  "name": "Custom Config",
+  "type": "config",
+  "source": "local",
+  "source_path": "/path/to/local/config.yaml",
+  "path": "user/config.yaml"
+}
+```
+
+**Fields:**
+- `source_path` - Path to source file or directory
+- `path` - Destination path relative to ComfyUI directory
+
+#### 5. Bundled in ZIP
+
+Files included in the ZIP package (extracted automatically):
+
+```json
+{
+  "name": "Workflow Files",
+  "type": "file",
+  "source": "bundled",
+  "path": "user/workflows/"
+}
+```
+
+**Note:** Bundled files are extracted from the ZIP's `ComfyUI/` folder structure.
+
+#### 6. Pip Package
+
+Install Python packages via pip:
+
+```json
+{
+  "name": "OpenCV",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "opencv-python",
+  "version": "4.8.0.74",
+  "required": false
+}
+```
+
+**Fields:**
+- `package` - Package name on PyPI
+- `version` - (Optional) Specific version to install
+
+### Common Fields
+
+All items support these fields:
+
+- **`name`** (required) - Human-readable name
+- **`type`** (required) - Item type (see table above)
+- **`source`** (required) - Source type (see source types above)
+- **`required`** (optional) - If `true`, installation fails if this item fails
+- **`size_mb`** (optional) - Size in megabytes (for display purposes)
+
+## Complete Example Manifest
+
+```json
+{
+  "package": {
+    "name": "SDXL Complete Setup",
+    "version": "1.0.0",
+    "description": "Full SDXL setup with custom nodes"
+  },
+  "metadata": {
+    "total_size_mb": 15000,
+    "estimated_time": "10-15 minutes",
+    "tags": ["sdxl", "upscaling"],
+    "details": "Includes SDXL base, refiner, VAE, and essential custom nodes"
+  },
+  "items": [
+    {
+      "name": "SDXL Base 1.0",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "file": "sd_xl_base_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_base_1.0.safetensors",
+      "size_mb": 6938,
+      "required": true
+    },
+    {
+      "name": "SDXL Refiner 1.0",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-refiner-1.0",
+      "file": "sd_xl_refiner_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_refiner_1.0.safetensors",
+      "size_mb": 6075,
+      "required": false
+    },
+    {
+      "name": "SDXL VAE",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/sdxl-vae",
+      "file": "sdxl_vae.safetensors",
+      "path": "models/vae/sdxl_vae.safetensors",
+      "size_mb": 335,
+      "required": true
+    },
+    {
+      "name": "ComfyUI Manager",
+      "type": "custom_node",
+      "source": "git",
+      "url": "https://github.com/ltdrdata/ComfyUI-Manager.git",
+      "path": "custom_nodes/ComfyUI-Manager",
+      "ref": "main",
+      "install_requirements": true,
+      "required": true
+    },
+    {
+      "name": "ControlNet Preprocessors",
+      "type": "custom_node",
+      "source": "git",
+      "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+      "path": "custom_nodes/comfyui_controlnet_aux",
+      "install_requirements": true,
+      "required": false
+    },
+    {
+      "name": "NumPy",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "numpy",
+      "version": "1.24.3",
+      "required": false
+    }
+  ]
+}
+```
+
+## Package Structure (ZIP)
+
+When distributing as a ZIP package, use this structure:
 
 ```
-============================================================
-ComfyUI Modular Installer
-============================================================
-ComfyUI Path: /path/to/ComfyUI
-Package: workflow_package.zip
-============================================================
+package.zip
+├── manifest.json          # Required: Installation manifest
+└── ComfyUI/              # Optional: Bundled files
+    ├── models/
+    │   └── ...
+    ├── custom_nodes/
+    │   └── ...
+    └── user/
+        └── ...
+```
 
-[1/3] Extracting package...
-[package_manager] Checking for manifest...
-[package_manager] ✅ Manifest processed - models downloaded
-[smart_extractor] Mode: SMART
-[smart_extractor] Extracted root: workflow.json
-✓ Package extracted to: /tmp/temp_abc123
+**Important:**
+- `manifest.json` must be at the root of the ZIP
+- Files in `ComfyUI/` folder are extracted directly to your ComfyUI installation
+- Reference bundled files in manifest with `"source": "bundled"`
 
-[2/3] Loading workflow...
-✓ Workflow loaded successfully
+## Usage Examples
 
-[3/3] Installation complete!
+### Install from Manifest File
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m sdxl_setup.json
+```
 
-============================================================
-INSTALLATION SUMMARY
-============================================================
-Package: workflow_package
-ComfyUI Path: /path/to/ComfyUI
-✓ Models downloaded via manifest
-✓ Custom nodes installed
-✓ Files extracted: 125
-  Files skipped (already up-to-date): 42
-✓ Workflow saved to: /tmp/temp_abc123/workflow.json
+### Install from ZIP Package
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m complete_setup.zip
+```
 
-⚠️  IMPORTANT: Restart ComfyUI to load new custom nodes
-============================================================
+### Force Reinstall Everything
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --force
+```
+
+### Install Only Required Items
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --required-only
+```
+
+### Preview Before Installing
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --list-contents
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --dry-run
+```
+
+### Install with Logging
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json -l install.log
+```
+
+### Sequential Downloads (Slower but More Stable)
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --sequential
+```
+
+### Clean Up Partial Downloads
+```bash
+python ModularInstaller.py -c C:/ComfyUI --cleanup
+```
+
+## Advanced Features
+
+### Gated Models (HuggingFace)
+
+Some models require license acceptance. To download gated models:
+
+1. Accept the license on HuggingFace website
+2. Create a HuggingFace access token with read permissions
+3. Set environment variable:
+   ```bash
+   # Windows
+   set HF_TOKEN=your_token_here
+
+   # Linux/Mac
+   export HF_TOKEN=your_token_here
+   ```
+4. Run installer normally
+
+### Resume Interrupted Downloads
+
+The installer automatically resumes interrupted downloads. If a download fails:
+
+1. Fix the issue (network, disk space, etc.)
+2. Run the same command again
+3. Downloads resume from where they stopped
+
+To disable resume functionality:
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-resume
+```
+
+### Parallel Downloads
+
+By default, the installer downloads 4 items simultaneously. Adjust with `--workers`:
+
+```bash
+# Use 8 parallel workers
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --workers 8
+
+# Disable parallelism
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --sequential
+```
+
+### Checksum Verification
+
+The installer verifies SHA256 checksums for model files when provided. To skip verification:
+
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-verify
 ```
 
 ## Troubleshooting
 
-**Package structure invalid:**
-- Ensure `workflow.json` exists at the root of the ZIP
-- Check that the ZIP doesn't have an extra top-level folder
+### "Manifest not found in ZIP"
+- Ensure `manifest.json` is at the root of the ZIP file
+- Check if it's named `manifest.json` (not `manifest.txt` or inside a folder)
 
-**Models not installing:**
-- Verify manifest.json syntax
-- Check internet connection for downloads
-- Use `--force-extract` to re-download
+### "Checksum mismatch"
+- File may be corrupted
+- Use `--force` to re-download
+- Verify the SHA256 in your manifest is correct
 
-**Custom nodes not working:**
-- Restart ComfyUI after installation (custom nodes require restart)
-- Check custom node `requirements.txt` for missing dependencies
-- Review installation logs for errors
+### "Gated model" error
+- Model requires license acceptance on HuggingFace
+- Accept license and set `HF_TOKEN` environment variable
+- Mark item with `"gated": true` in manifest
 
-**Disk space issues:**
-- Use `-t` to specify an alternate temporary directory
-- Clear old temporary files from ComfyUI/temp
+### "Git clone failed"
+- Check internet connection
+- Verify Git is installed and in PATH
+- Try cloning the repository manually to test
 
-**Workflow validation errors:**
-- Ensure workflow is exported in API format (not UI format)
-- Use "Save (API Format)" in ComfyUI to export workflows
+### Custom nodes not loading
+- Restart ComfyUI after installing custom nodes
+- Check `ComfyUI/custom_nodes/` directory for errors
+- Review installation logs for dependency errors
 
-## Advanced Features
+### Disk space issues
+- Use `-t` to specify alternate temp directory
+- Check available space before installing
+- Clean up old installations: `--cleanup`
 
-### Pre/Post Installation Scripts
+## Creating Your Own Manifests
 
-Include `pre.py` or `post.py` in your package for custom installation logic:
+1. **Start with package metadata:**
+   ```json
+   {
+     "package": {
+       "name": "My Setup",
+       "version": "1.0.0",
+       "description": "Description here"
+     },
+     "items": []
+   }
+   ```
 
-**pre.py** - Runs before file extraction:
-```python
-import os
-import shutil
+2. **Add items for each resource:**
+   - Models from HuggingFace
+   - Custom nodes from Git
+   - Local files or configs
 
-# Create custom directories
-os.makedirs("custom_folder", exist_ok=True)
-print("Pre-installation setup complete")
-```
+3. **Set required flags appropriately:**
+   - `"required": true` for essential items
+   - `"required": false` for optional enhancements
 
-**post.py** - Runs after file extraction:
-```python
-import subprocess
-import sys
+4. **Include checksums for models:**
+   - Download file first
+   - Calculate SHA256: `sha256sum file.safetensors`
+   - Add to manifest
 
-# Install additional dependencies
-subprocess.check_call([sys.executable, "-m", "pip", "install", "custom-package"])
-
-# Signal that ComfyUI restart is required (optional)
-print("BENCHMARK_RESTART_REQUIRED")
-print("Post-installation setup complete")
-```
-
-### Smart Extraction
-
-The installer intelligently skips files that are already installed and up-to-date:
-- Compares file sizes to detect changes
-- Checks custom node versions via `pyproject.toml`
-- Only extracts changed or new files
-- Use `--force-extract` to override and reinstall everything
-
-## Development
-
-### Project Structure
-```
-ModularInstaller/
-├── ModularInstaller.py      # Main installer script
-├── core/
-│   ├── package_manager.py   # Coordinates extraction and manifest
-│   ├── smart_extractor.py   # Smart file extraction
-│   ├── workflow_manager.py  # Workflow loading and validation
-│   ├── manifest_handler.py  # Model download management
-│   ├── manifest_integration.py  # Manifest integration
-│   └── gui.py              # Qt-based GUI
-├── workflows/
-│   └── workflows.json       # Example workflow registry
-├── requirements.txt         # Python dependencies
-└── README.md               # This file
-```
+5. **Test your manifest:**
+   ```bash
+   python ModularInstaller.py -c /path/to/test/ComfyUI -m your_manifest.json --dry-run
+   ```
 
 ## Contributing
 
