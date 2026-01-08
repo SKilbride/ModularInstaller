@@ -504,7 +504,26 @@ python ModularInstaller.py --no-auto-install -m manifest.json
 3. If not found, prompts to download ComfyUI portable (~2GB)
 4. Downloads from GitHub releases (latest version)
 5. Extracts to target location using py7zr
-6. Automatically detects and uses embedded Python for all installations
+6. Sets persistent `COMFYUI_BASE` environment variable
+7. Automatically detects and uses embedded Python for all installations
+
+**Environment Variable:**
+After installation, the installer sets a persistent `COMFYUI_BASE` environment variable:
+- **Value**: The base installation path (e.g., `C:\Users\YourName\ComfyUI_BP`)
+- **Purpose**: Other tools and scripts can reference this location
+- **Scope**: User-level (system-level requires admin/root privileges)
+- **Persistence**:
+  - Windows: Set via `setx` command
+  - Linux/Mac: Added to `.bashrc`, `.zshrc`, or `.profile`
+
+You can reference it in your own scripts:
+```bash
+# Windows
+echo %COMFYUI_BASE%
+
+# Linux/Mac
+echo $COMFYUI_BASE
+```
 
 **Note:** Auto-installation is currently Windows-only. On Linux/Mac, you must:
 - Install ComfyUI manually

@@ -4,6 +4,8 @@ import os
 import sys
 import shutil
 import requests
+import subprocess
+import platform
 from pathlib import Path
 from typing import Optional, Tuple
 from tqdm import tqdm
@@ -159,6 +161,9 @@ class ComfyUIInstaller:
         """
         # Check for existing installation
         if self.check_existing_installation() and not force_reinstall:
+            # Set environment variable even for existing installation
+            self.log("Setting COMFYUI_BASE environment variable...")
+            self.set_persistent_env_var("COMFYUI_BASE", str(self.install_path), system_level=False)
             return True, f"ComfyUI already installed at {self.install_path}"
 
         # Create temp directory for download
@@ -179,8 +184,17 @@ class ComfyUIInstaller:
             if not self.check_existing_installation():
                 return False, "Installation verification failed"
 
+            # Set persistent environment variable
+            self.log("\nSetting COMFYUI_BASE environment variable...")
+            env_success = self.set_persistent_env_var("COMFYUI_BASE", str(self.install_path), system_level=False)
+            if env_success:
+                self.log(f"  COMFYUI_BASE = {self.install_path}")
+            else:
+                self.log("  ⚠ Warning: Failed to set COMFYUI_BASE environment variable", "WARNING")
+                self.log("  You may need to set it manually", "WARNING")
+
             # Cleanup
-            self.log("Cleaning up temporary files...")
+            self.log("\nCleaning up temporary files...")
             shutil.rmtree(temp_dir, ignore_errors=True)
 
             return True, f"ComfyUI successfully installed to {self.install_path}"
@@ -211,6 +225,134 @@ class ComfyUIInstaller:
             info['is_portable'] = True
 
         return info
+
+    @staticmethod
+    def is_admin() -> bool:
+        """
+        Check if the current process has administrator privileges.
+
+        Returns:
+            True if running as admin, False otherwise
+        """
+        try:
+            if platform.system() == "Windows":
+                import ctypes
+                return ctypes.windll.shell32.IsUserAnAdmin()
+            else:
+                # On Unix-like systems, check if effective UID is 0 (root)
+                return os.geteuid() == 0
+        except Exception:
+            return False
+
+    def set_persistent_env_var(self, name: str, value: str, system_level: bool = False) -> bool:
+        """
+        Set a persistent environment variable across OS platforms.
+
+        Args:
+            name: Environment variable name
+            value: Environment variable value
+            system_level: Set at system level (requires admin/root)
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            if platform.system() == "Windows":
+                # Windows: Use setx or PowerShell
+                if system_level:
+                    if not self.is_admin():
+                        self.log("⚠ System-level environment variable requires administrator privileges", "WARNING")
+                        self.log("  Setting at user level instead...", "WARNING")
+                        system_level = False
+
+                if system_level:
+                    # Use PowerShell for system-level
+                    cmd = [
+                        'powershell', '-Command',
+                        f'[Environment]::SetEnvironmentVariable("{name}", "{value}", "Machine")'
+                    ]
+                else:
+                    # Use setx for user-level
+                    cmd = ['setx', name, value]
+
+                result = subprocess.run(
+                    cmd,
+                    capture_output=True,
+                    text=True,
+                    check=True
+                )
+                scope = "System" if system_level else "User"
+                self.log(f"✓ Environment variable '{name}' set ({scope} level)")
+
+                # Also set in current process
+                os.environ[name] = value
+
+            else:
+                # Linux/macOS: Append to shell config
+                shell = os.environ.get('SHELL', '')
+
+                if 'bash' in shell:
+                    config_file = Path.home() / '.bashrc'
+                elif 'zsh' in shell:
+                    config_file = Path.home() / '.zshrc'
+                else:
+                    config_file = Path.home() / '.profile'
+
+                if system_level:
+                    config_file = Path('/etc/environment')
+                    if not self.is_admin():
+                        self.log("⚠ System-level environment variable requires root privileges", "WARNING")
+                        self.log("  Setting at user level instead...", "WARNING")
+                        config_file = Path.home() / '.profile'
+                        system_level = False
+
+                # Check if variable already exists in file
+                export_line = f'export {name}="{value}"'
+                file_exists = config_file.exists()
+
+                if file_exists:
+                    with config_file.open('r') as f:
+                        content = f.read()
+                        # Check if variable is already set
+                        if f'export {name}=' in content:
+                            # Update existing line
+                            lines = content.split('\n')
+                            updated = False
+                            for i, line in enumerate(lines):
+                                if line.startswith(f'export {name}='):
+                                    lines[i] = export_line
+                                    updated = True
+                                    break
+                            if updated:
+                                with config_file.open('w') as f:
+                                    f.write('\n'.join(lines))
+                            self.log(f"✓ Environment variable '{name}' updated in {config_file}")
+                        else:
+                            # Append new variable
+                            with config_file.open('a') as f:
+                                f.write(f'\n{export_line}\n')
+                            self.log(f"✓ Environment variable '{name}' added to {config_file}")
+                else:
+                    # Create new file
+                    with config_file.open('w') as f:
+                        f.write(f'{export_line}\n')
+                    self.log(f"✓ Environment variable '{name}' added to {config_file}")
+
+                # Set in current process
+                os.environ[name] = value
+
+            return True
+
+        except subprocess.CalledProcessError as e:
+            self.log(f"✗ Error setting environment variable '{name}': {e.stderr}", "ERROR")
+            return False
+        except PermissionError:
+            level = "system" if system_level else "user"
+            self.log(f"✗ Permission denied: Cannot set '{name}' at {level} level", "ERROR")
+            return False
+        except Exception as e:
+            self.log(f"✗ Unexpected error setting environment variable '{name}': {str(e)}", "ERROR")
+            return False
 
     @staticmethod
     def prompt_user_action() -> int:
