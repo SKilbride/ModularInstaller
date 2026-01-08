@@ -21,18 +21,20 @@ class ManifestHandler:
 
     SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip']
     SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config']
-    
-    def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None, 
-                 max_workers: int = 4, resume_downloads: bool = True):
+    SUPPORTED_PATH_BASES = ['comfyui', 'home', 'temp', 'appdata', 'absolute']
+
+    def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
+                 max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None):
         """
         Initialize ManifestHandler.
-        
+
         Args:
             manifest_path: Path to manifest file (YAML or JSON)
             comfy_path: Path to ComfyUI installation
             log_file: Optional path to log file
             max_workers: Number of parallel download workers (default: 4)
             resume_downloads: Enable resume capability for interrupted downloads (default: True)
+            python_executable: Optional path to Python executable for pip installs (default: sys.executable)
         """
         self.manifest_path = Path(manifest_path)
         self.comfy_path = Path(comfy_path)
@@ -41,6 +43,7 @@ class ManifestHandler:
         self.hf_token = os.getenv('HF_TOKEN')
         self.max_workers = max_workers
         self.resume_downloads = resume_downloads
+        self.python_executable = Path(python_executable) if python_executable else Path(sys.executable)
         self.partial_download_dir = self.comfy_path / ".partial_downloads"
         
         # Track what was actually downloaded vs skipped
@@ -62,7 +65,63 @@ class ManifestHandler:
         if self.log_file:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(formatted_message + '\n')
-    
+
+    def resolve_path_base(self, path_base: str) -> Path:
+        """
+        Resolve base path for different path_base types.
+
+        Args:
+            path_base: Type of base path (comfyui, home, temp, appdata, absolute)
+
+        Returns:
+            Resolved base path
+        """
+        if path_base == 'comfyui':
+            return self.comfy_path
+        elif path_base == 'home':
+            return Path.home()
+        elif path_base == 'temp':
+            if sys.platform == 'win32':
+                return Path(os.getenv('TEMP', os.path.expanduser('~/temp')))
+            else:
+                return Path(os.getenv('TMPDIR', '/tmp'))
+        elif path_base == 'appdata':
+            if sys.platform == 'win32':
+                return Path(os.getenv('APPDATA', os.path.expanduser('~/AppData/Roaming')))
+            elif sys.platform == 'darwin':
+                return Path.home() / 'Library' / 'Application Support'
+            else:  # Linux
+                return Path.home() / '.local' / 'share'
+        elif path_base == 'absolute':
+            return Path('/')  # Will be replaced by absolute path in item
+        else:
+            self.log(f"⚠ Unknown path_base: {path_base}, defaulting to comfyui", "WARNING")
+            return self.comfy_path
+
+    def resolve_item_path(self, item: Dict) -> Path:
+        """
+        Resolve full path for an item based on its path and path_base.
+
+        Args:
+            item: Manifest item dictionary
+
+        Returns:
+            Resolved absolute path
+        """
+        if 'path' not in item:
+            return None
+
+        path_base = item.get('path_base', 'comfyui')
+        item_path = item['path']
+
+        if path_base == 'absolute':
+            # For absolute paths, use the path directly
+            return Path(item_path)
+        else:
+            # Resolve base and join with relative path
+            base_path = self.resolve_path_base(path_base)
+            return base_path / item_path
+
     def load_manifest(self) -> Dict:
         """Load and validate manifest file."""
         if not self.manifest_path.exists():
@@ -83,23 +142,28 @@ class ManifestHandler:
         """Basic manifest validation."""
         if not self.manifest:
             raise ValueError("Manifest not loaded")
-        
+
         required_keys = ['package', 'items']
         for key in required_keys:
             if key not in self.manifest:
                 raise ValueError(f"Manifest missing required key: {key}")
-        
+
         # Validate items
         for item in self.manifest['items']:
             if 'name' not in item or 'type' not in item or 'source' not in item:
                 raise ValueError(f"Item missing required fields: {item}")
-            
+
             if item['type'] not in self.SUPPORTED_TYPES:
                 raise ValueError(f"Unsupported item type: {item['type']}")
-            
+
             if item['source'] not in self.SUPPORTED_SOURCES:
                 raise ValueError(f"Unsupported source: {item['source']}")
-        
+
+            # Validate path_base if specified
+            if 'path_base' in item:
+                if item['path_base'] not in self.SUPPORTED_PATH_BASES:
+                    raise ValueError(f"Unsupported path_base '{item['path_base']}' for item '{item['name']}'")
+
         self.log("Manifest validation passed")
         return True
     
@@ -133,7 +197,7 @@ class ManifestHandler:
                 self.log(f"⚠ Item {item['name']} has no path, skipping check", "WARNING")
                 continue
 
-            path = self.comfy_path / item['path']
+            path = self.resolve_item_path(item)
             
             status = {
                 'exists': False,
@@ -338,10 +402,10 @@ class ManifestHandler:
     def _download_from_huggingface(self, item: Dict, verify_checksum: bool = True):
         """Download from Hugging Face Hub with temp directory cleanup."""
         self.log(f"↓ Downloading {item['name']} from Hugging Face...")
-        
+
         repo_id = item['repo']
         filename = item['file']
-        local_path = self.comfy_path / item['path']
+        local_path = self.resolve_item_path(item)
         partial_path = self._get_partial_path(item['path'])
         
         # Parse remote_path to get subfolder if provided
@@ -436,7 +500,7 @@ class ManifestHandler:
         """
         url = item['url']
         ref = item.get('ref', 'main')
-        local_path = self.comfy_path / item['path']
+        local_path = self.resolve_item_path(item)
         
         # Case 1: Directory doesn't exist - fresh clone
         if not local_path.exists():
@@ -623,9 +687,10 @@ class ManifestHandler:
             req_file = local_path / 'requirements.txt'
             if req_file.exists():
                 self.log(f"  Installing requirements for {item['name']}...")
+                self.log(f"  Using Python: {self.python_executable}")
                 try:
                     subprocess.run([
-                        sys.executable, '-m', 'pip', 'install', '-r', str(req_file)
+                        str(self.python_executable), '-m', 'pip', 'install', '-r', str(req_file)
                     ], check=True, capture_output=False)
                     self.log(f"  ✓ Requirements installed")
                 except subprocess.CalledProcessError as e:
@@ -636,9 +701,9 @@ class ManifestHandler:
     def _download_from_url(self, item: Dict, verify_checksum: bool = True):
         """Download from direct URL with progress bar and resume capability."""
         self.log(f"↓ Downloading {item['name']} from URL...")
-        
+
         url = item['url']
-        local_path = self.comfy_path / item['path']
+        local_path = self.resolve_item_path(item)
         partial_path = self._get_partial_path(item['path'])
         
         # Create parent directory
@@ -717,9 +782,9 @@ class ManifestHandler:
     def _copy_from_local(self, item: Dict):
         """Copy from local path."""
         self.log(f"↓ Copying {item['name']} from local...")
-        
+
         source = Path(item['source_path'])
-        dest = self.comfy_path / item['path']
+        dest = self.resolve_item_path(item)
         
         if not source.exists():
             raise FileNotFoundError(f"Source path not found: {source}")
@@ -758,10 +823,11 @@ class ManifestHandler:
             package_spec = f"{package_spec}=={version}"
 
         self.log(f"↓ Installing Python package: {package_spec}...")
+        self.log(f"  Using Python: {self.python_executable}")
 
         try:
             subprocess.run([
-                sys.executable, '-m', 'pip', 'install', package_spec
+                str(self.python_executable), '-m', 'pip', 'install', package_spec
             ], check=True, capture_output=True, text=True)
             self.log(f"✓ {item['name']} installed via pip")
             self.downloaded_items.append(item)

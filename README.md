@@ -4,18 +4,21 @@
 The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI models, custom nodes, and assets. It uses declarative manifest files to specify what should be downloaded and where, supporting multiple sources including HuggingFace, Git repositories, direct URLs, and local files.
 
 ### Key Features
+- **Automatic ComfyUI Installation**: Automatically downloads and installs ComfyUI portable on Windows
 - **Manifest-driven**: Declare all dependencies in a single JSON/YAML file
 - **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, and pip packages
+- **Flexible path management**: Install to ComfyUI, home directory, temp, or absolute paths
+- **Embedded Python support**: Automatically uses ComfyUI's embedded Python for package installations
 - **Smart caching**: Skip already-downloaded files and verify checksums
 - **Parallel downloads**: Download multiple items simultaneously for faster installation
 - **Resume capability**: Continue interrupted downloads from where they left off
 - **Bundled packages**: Include files directly in ZIP packages alongside the manifest
 
 ## Prerequisites
-1. A working ComfyUI installation
-2. Git (for cloning repositories)
-3. Python 3.8 or higher
-4. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
+1. Git (for cloning custom node repositories)
+2. Python 3.8 or higher (for the installer itself; ComfyUI portable includes embedded Python)
+3. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
+4. Windows (for auto-installation feature; manual ComfyUI installation required on Linux/Mac)
 
 ## Installation
 1. Clone this repository:
@@ -31,38 +34,62 @@ The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI
 
 ## Quick Start
 
-### Basic Usage
+### Auto-Install ComfyUI (Windows Only)
+The installer can automatically download and set up ComfyUI portable:
+
+```bash
+# ComfyUI will be installed to ~/ComfyUI_BP automatically
+python ModularInstaller.py -m manifest.json
+```
+
+The installer will:
+1. Check if ComfyUI exists at `~/ComfyUI_BP`
+2. If not found, prompt to download ComfyUI portable (~2GB download)
+3. Extract to `~/ComfyUI_BP`
+4. Use embedded Python for all package installations
+
+### Manual ComfyUI Path
+If you have ComfyUI installed elsewhere:
+
 ```bash
 python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json
 ```
 
 ### With ZIP Package
 ```bash
-python ModularInstaller.py -c /path/to/ComfyUI -m package.zip
+python ModularInstaller.py -m package.zip
 ```
 
 ### Preview Before Installing
 ```bash
-python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json --list-contents
-python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json --dry-run
+python ModularInstaller.py -m manifest.json --list-contents
+python ModularInstaller.py -m manifest.json --dry-run
 ```
 
 ## Command Line Arguments
 
 ### Required Arguments
-- **`-c, --comfy_path PATH`** - Path to ComfyUI installation directory
 - **`-m, --manifest PATH`** - Path to manifest.json/yaml file or ZIP package
 
 ### Optional Arguments
+
+**Installation Options:**
+- **`-c, --comfy_path PATH`** - Path to ComfyUI installation (default: auto-install to ~/ComfyUI_BP/ComfyUI)
+- **`--install-path PATH`** - Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)
+- **`--no-auto-install`** - Disable automatic ComfyUI installation if not found
+
+**Download Options:**
 - **`-f, --force`** - Force re-download/installation of all items
-- **`-l, --log [FILE]`** - Enable logging to file (auto-generated name if not specified)
-- **`-t, --temp_path PATH`** - Alternate temporary directory
 - **`--required-only`** - Only install items marked as required
 - **`--no-verify`** - Skip checksum verification
-- **`--dry-run`** - Preview actions without downloading
 - **`--sequential`** - Disable parallel downloads
 - **`--workers N`** - Number of parallel workers (default: 4)
 - **`--no-resume`** - Disable resume capability
+
+**Utility Options:**
+- **`-l, --log [FILE]`** - Enable logging to file (auto-generated name if not specified)
+- **`-t, --temp_path PATH`** - Alternate temporary directory
+- **`--dry-run`** - Preview actions without downloading
 - **`--list-contents`** - List manifest items without installing
 - **`--cleanup`** - Clean up partial download files and exit
 
@@ -247,8 +274,35 @@ All items support these fields:
 - **`name`** (required) - Human-readable name
 - **`type`** (required) - Item type (see table above)
 - **`source`** (required) - Source type (see source types above)
+- **`path`** (usually required) - Relative path for installation (see `path_base` below)
+- **`path_base`** (optional) - Base path type for installation (default: `comfyui`)
+  - `comfyui` - Install relative to ComfyUI directory (default)
+  - `home` - Install relative to user home directory
+  - `temp` - Install to temporary directory
+  - `appdata` - Install to application data directory
+  - `absolute` - Use absolute path (path must be absolute)
 - **`required`** (optional) - If `true`, installation fails if this item fails
 - **`size_mb`** (optional) - Size in megabytes (for display purposes)
+
+#### Path Base Examples
+
+```json
+{
+  "name": "SDXL Model",
+  "path": "models/checkpoints/sdxl.safetensors",
+  "path_base": "comfyui"  // Installs to ComfyUI/models/checkpoints/
+},
+{
+  "name": "User Config",
+  "path": ".comfyui/settings.json",
+  "path_base": "home"  // Installs to ~/. comfyui/settings.json
+},
+{
+  "name": "Shared Model",
+  "path": "/opt/models/shared/model.safetensors",
+  "path_base": "absolute"  // Installs to exact path
+}
+```
 
 ## Complete Example Manifest
 
@@ -420,6 +474,56 @@ The installer automatically resumes interrupted downloads. If a download fails:
 To disable resume functionality:
 ```bash
 python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-resume
+```
+
+### ComfyUI Auto-Installation (Windows)
+
+The installer can automatically download and set up ComfyUI portable on Windows:
+
+**Automatic Installation:**
+```bash
+# Will auto-install to ~/ComfyUI_BP if not found
+python ModularInstaller.py -m manifest.json
+```
+
+**Custom Installation Path:**
+```bash
+# Install to custom location
+python ModularInstaller.py --install-path C:/MyComfyUI -m manifest.json
+```
+
+**Disable Auto-Install:**
+```bash
+# Require manual ComfyUI installation
+python ModularInstaller.py --no-auto-install -m manifest.json
+```
+
+**How it works:**
+1. Checks for ComfyUI at `~/ComfyUI_BP` (or custom path)
+2. If found, prompts to continue with existing installation or cancel
+3. If not found, prompts to download ComfyUI portable (~2GB)
+4. Downloads from GitHub releases (latest version)
+5. Extracts to target location using py7zr
+6. Automatically detects and uses embedded Python for all installations
+
+**Note:** Auto-installation is currently Windows-only. On Linux/Mac, you must:
+- Install ComfyUI manually
+- Specify path with `-c /path/to/ComfyUI`
+
+### Embedded Python Support
+
+When using ComfyUI portable (auto-installed or manual), the installer automatically:
+- Detects the embedded Python at `ComfyUI_BP/python_embeded/python.exe`
+- Uses it for all pip package installations
+- Uses it for custom node `requirements.txt` installations
+
+This ensures packages are installed into ComfyUI's isolated environment, not your system Python.
+
+**Manual Override:**
+If you want to use system Python instead:
+```bash
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json
+# Specifying -c manually disables embedded Python detection
 ```
 
 ### Parallel Downloads

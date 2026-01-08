@@ -9,6 +9,7 @@ from datetime import datetime
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core.manifest_handler import ManifestHandler
 from core.package_manager import PackageManager
+from core.comfyui_installer import ComfyUIInstaller
 
 
 def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> Path:
@@ -50,10 +51,14 @@ def main():
     parser = argparse.ArgumentParser(
         description="ComfyUI Modular Installer - Install models, custom nodes, and assets from manifest files."
     )
-    parser.add_argument("-c", "--comfy_path", type=str, required=True,
-                        help="Path to ComfyUI installation folder")
+    parser.add_argument("-c", "--comfy_path", type=str,
+                        help="Path to ComfyUI installation folder (default: auto-install to ~/ComfyUI_BP/ComfyUI)")
     parser.add_argument("-m", "--manifest", type=str,
                         help="Path to manifest.json/yaml file or ZIP package containing manifest")
+    parser.add_argument("--no-auto-install", action="store_true",
+                        help="Disable automatic ComfyUI installation if not found")
+    parser.add_argument("--install-path", type=str,
+                        help="Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)")
     parser.add_argument("-l", "--log", nargs='?', const=True, default=False,
                         help="Enable logging to file")
     parser.add_argument("-t", "--temp_path", type=str,
@@ -82,10 +87,84 @@ def main():
     if not args.manifest and not args.cleanup:
         parser.error("--manifest (-m) is required unless using --cleanup")
 
-    comfy_path = Path(args.comfy_path).resolve()
+    # === COMFYUI INSTALLATION/DETECTION ===
+    install_path = Path(args.install_path) if args.install_path else ComfyUIInstaller.DEFAULT_INSTALL_PATH
+    comfyui_installer = ComfyUIInstaller(install_path=install_path)
+
+    # Determine ComfyUI path
+    if args.comfy_path:
+        # User specified path
+        comfy_path = Path(args.comfy_path).resolve()
+        python_executable = None  # Use system Python
+    else:
+        # Auto-detect or install ComfyUI
+        print("\n" + "=" * 60)
+        print("COMFYUI INSTALLATION CHECK")
+        print("=" * 60)
+
+        if comfyui_installer.check_existing_installation():
+            # Existing installation found
+            print(f"✓ ComfyUI found at: {install_path}")
+
+            # Get installation info
+            info = comfyui_installer.get_installation_info()
+            comfy_path = info['comfyui_path']
+            python_executable = info['python_executable']
+
+            if python_executable:
+                print(f"✓ Embedded Python found: {python_executable}")
+
+            # Prompt user for action
+            if not args.cleanup:
+                user_choice = ComfyUIInstaller.prompt_user_action()
+                if user_choice == 2:
+                    print("\nInstallation cancelled by user.")
+                    return 0
+                # Choice 1: Continue with existing installation
+
+        else:
+            # No installation found
+            print(f"⊘ ComfyUI not found at: {install_path}")
+
+            if args.no_auto_install:
+                print("❌ ERROR: ComfyUI not found and auto-install is disabled")
+                print(f"   Please install ComfyUI manually or remove --no-auto-install flag")
+                return 1
+
+            # Prompt to install
+            print("\nWould you like to download and install ComfyUI portable? (y/n): ", end="")
+            try:
+                response = input().strip().lower()
+                if response != 'y':
+                    print("\nInstallation cancelled by user.")
+                    return 0
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nInstallation cancelled by user.")
+                return 0
+
+            # Install ComfyUI
+            print("\n" + "=" * 60)
+            print("INSTALLING COMFYUI")
+            print("=" * 60)
+            success, message = comfyui_installer.install_comfyui()
+            if not success:
+                print(f"❌ ERROR: {message}")
+                return 1
+
+            print(f"✓ {message}")
+
+            # Get installation info after install
+            info = comfyui_installer.get_installation_info()
+            comfy_path = info['comfyui_path']
+            python_executable = info['python_executable']
+
+            if python_executable:
+                print(f"✓ Embedded Python: {python_executable}")
+
+        print("=" * 60 + "\n")
 
     # Validate ComfyUI path
-    if not comfy_path.exists():
+    if not comfy_path or not comfy_path.exists():
         print(f"❌ ERROR: ComfyUI path does not exist: {comfy_path}")
         return 1
 
@@ -159,7 +238,8 @@ def main():
             comfy_path=comfy_path,
             log_file=log_file,
             max_workers=args.workers,
-            resume_downloads=not args.no_resume
+            resume_downloads=not args.no_resume,
+            python_executable=python_executable
         )
 
         # Load and validate manifest
