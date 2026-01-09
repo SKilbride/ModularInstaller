@@ -45,12 +45,21 @@ class InstallerThread(QThread):
                 installer = ComfyUIInstaller(install_path=install_path)
 
                 if not installer.check_existing_installation():
-                    self.log_signal.emit("ComfyUI not found. Installing...")
+                    msg = f"✗ ComfyUI not found at {install_path}"
+                    self.log_signal.emit(msg)
+                    print(msg)
+                    msg = "→ Installing ComfyUI..."
+                    self.log_signal.emit(msg)
+                    print(msg)
                     success, message = installer.install_comfyui()
                     if not success:
                         self.finished_signal.emit(False, message)
                         return
                     self.log_signal.emit(f"✓ {message}")
+                else:
+                    msg = f"✓ ComfyUI found at {install_path}"
+                    self.log_signal.emit(msg)
+                    print(msg)
 
                 info = installer.get_installation_info()
                 comfy_path = info['comfyui_path']
@@ -60,9 +69,18 @@ class InstallerThread(QThread):
                 if self.config.get('install_blender') and sys.platform == 'win32':
                     self.log_signal.emit("Checking Blender installation...")
                     if not installer.check_blender_installed():
-                        self.log_signal.emit("Installing Blender 4.5 LTS...")
+                        msg = "✗ Blender 4.5 LTS not found"
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        msg = "→ Installing Blender 4.5 LTS..."
+                        self.log_signal.emit(msg)
+                        print(msg)
                         success, message = installer.install_blender()
                         self.log_signal.emit(f"Blender: {message}")
+                    else:
+                        msg = "✓ Blender 4.5 LTS already installed"
+                        self.log_signal.emit(msg)
+                        print(msg)
                 else:
                     if sys.platform == 'win32':
                         msg = "⊘ Skipping Blender installation (disabled by user)"
