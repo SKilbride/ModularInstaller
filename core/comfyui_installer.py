@@ -17,6 +17,7 @@ class ComfyUIInstaller:
 
     COMFYUI_DOWNLOAD_URL = "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
     DEFAULT_INSTALL_PATH = Path(os.path.expanduser("~")) / "ComfyUI_BP"
+    BLENDER_WINGET_ID = "BlenderFoundation.Blender.LTS.4.5"
 
     def __init__(self, install_path: Optional[Path] = None, log_file: Optional[Path] = None):
         """
@@ -243,6 +244,79 @@ class ComfyUIInstaller:
                 return os.geteuid() == 0
         except Exception:
             return False
+
+    def check_blender_installed(self) -> bool:
+        """
+        Check if Blender is installed.
+
+        Returns:
+            True if Blender is found, False otherwise
+        """
+        try:
+            if platform.system() == "Windows":
+                # Check via winget
+                result = subprocess.run(
+                    ['winget', 'list', '--id', self.BLENDER_WINGET_ID],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                # If Blender is installed, it will appear in the output
+                return self.BLENDER_WINGET_ID in result.stdout
+            else:
+                # On Linux/Mac, check if blender command exists
+                result = subprocess.run(
+                    ['which', 'blender'],
+                    capture_output=True,
+                    text=True
+                )
+                return result.returncode == 0
+        except Exception:
+            return False
+
+    def install_blender(self) -> Tuple[bool, str]:
+        """
+        Install Blender 4.5 LTS using winget (Windows only).
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        if platform.system() != "Windows":
+            return False, "Blender installation via winget is only supported on Windows"
+
+        # Check if already installed
+        if self.check_blender_installed():
+            self.log("✓ Blender 4.5 LTS is already installed")
+            return True, "Blender already installed"
+
+        self.log(f"Installing Blender 4.5 LTS via winget...")
+
+        try:
+            # Install with winget (silent mode)
+            result = subprocess.run(
+                ['winget', 'install', '--id', self.BLENDER_WINGET_ID, '--silent', '--accept-package-agreements', '--accept-source-agreements'],
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout for download/install
+            )
+
+            if result.returncode == 0:
+                self.log("✓ Blender 4.5 LTS installed successfully")
+                return True, "Blender installed successfully"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                self.log(f"✗ Blender installation failed: {error_msg}", "ERROR")
+                return False, f"Blender installation failed: {error_msg}"
+
+        except subprocess.TimeoutExpired:
+            self.log("✗ Blender installation timed out", "ERROR")
+            return False, "Blender installation timed out"
+        except FileNotFoundError:
+            self.log("✗ winget not found. Please install App Installer from Microsoft Store", "ERROR")
+            return False, "winget not found"
+        except Exception as e:
+            self.log(f"✗ Blender installation failed: {e}", "ERROR")
+            return False, f"Blender installation failed: {e}"
 
     def set_persistent_env_var(self, name: str, value: str, system_level: bool = False) -> bool:
         """

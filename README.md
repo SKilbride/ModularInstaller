@@ -5,6 +5,8 @@ The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI
 
 ### Key Features
 - **Automatic ComfyUI Installation**: Automatically downloads and installs ComfyUI portable on Windows
+- **Blender Integration**: Auto-install Blender 4.5 LTS via winget (Windows only)
+- **GUI and CLI modes**: Choose between graphical interface or command-line operation
 - **Manifest-driven**: Declare all dependencies in a single JSON/YAML file
 - **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, and pip packages
 - **Flexible path management**: Install to ComfyUI, home directory, temp, or absolute paths
@@ -34,7 +36,20 @@ The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI
 
 ## Quick Start
 
-### Auto-Install ComfyUI (Windows Only)
+### GUI Mode (Recommended for Beginners)
+Launch the graphical installer:
+
+```bash
+python ModularInstaller.py --gui
+```
+
+The GUI provides:
+- Visual file selection for manifest and ComfyUI path
+- Checkbox options for installation settings
+- Real-time progress display
+- Error handling with clear messages
+
+### CLI Mode - Auto-Install (Windows Only)
 The installer can automatically download and set up ComfyUI portable:
 
 ```bash
@@ -46,7 +61,8 @@ The installer will:
 1. Check if ComfyUI exists at `~/ComfyUI_BP`
 2. If not found, prompt to download ComfyUI portable (~2GB download)
 3. Extract to `~/ComfyUI_BP`
-4. Use embedded Python for all package installations
+4. Prompt to install Blender 4.5 LTS (used for 3D workflows)
+5. Use embedded Python for all package installations
 
 ### Manual ComfyUI Path
 If you have ComfyUI installed elsewhere:
@@ -77,6 +93,8 @@ python ModularInstaller.py -m manifest.json --dry-run
 - **`-c, --comfy_path PATH`** - Path to ComfyUI installation (default: auto-install to ~/ComfyUI_BP/ComfyUI)
 - **`--install-path PATH`** - Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)
 - **`--no-auto-install`** - Disable automatic ComfyUI installation if not found
+- **`--skip-blender`** - Skip Blender 4.5 LTS installation (Windows only)
+- **`--gui`** - Launch graphical installer interface
 
 **Download Options:**
 - **`-f, --force`** - Force re-download/installation of all items
@@ -528,6 +546,39 @@ echo $COMFYUI_BASE
 **Note:** Auto-installation is currently Windows-only. On Linux/Mac, you must:
 - Install ComfyUI manually
 - Specify path with `-c /path/to/ComfyUI`
+
+### Blender Installation (Windows)
+
+The installer can automatically install Blender 4.5 LTS for 3D object generation workflows:
+
+**Automatic Installation:**
+```bash
+# Blender will be prompted during installation
+python ModularInstaller.py -m manifest.json
+```
+
+**Skip Blender:**
+```bash
+# Skip Blender installation
+python ModularInstaller.py -m manifest.json --skip-blender
+```
+
+**How it works:**
+1. Checks if Blender is already installed via winget
+2. If not found, prompts user to install
+3. Uses `winget` to silently install Blender 4.5 LTS
+4. Installation ID: `BlenderFoundation.Blender.LTS.4.5`
+
+**Requirements:**
+- Windows 10/11 with winget (App Installer from Microsoft Store)
+- Automatically bypassed on Linux/Mac
+- Uses silent installation (no user interaction needed)
+
+**Manual Installation:**
+If you prefer to install Blender manually:
+```bash
+winget install --id BlenderFoundation.Blender.LTS.4.5
+```
 
 ### Embedded Python Support
 

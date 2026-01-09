@@ -59,6 +59,10 @@ def main():
                         help="Disable automatic ComfyUI installation if not found")
     parser.add_argument("--install-path", type=str,
                         help="Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)")
+    parser.add_argument("--skip-blender", action="store_true",
+                        help="Skip Blender 4.5 LTS installation (Windows only)")
+    parser.add_argument("--gui", action="store_true",
+                        help="Launch graphical installer interface")
     parser.add_argument("-l", "--log", nargs='?', const=True, default=False,
                         help="Enable logging to file")
     parser.add_argument("-t", "--temp_path", type=str,
@@ -83,6 +87,20 @@ def main():
                         help="Clean up partial download files and exit")
 
     args = parser.parse_args()
+
+    # === GUI MODE ===
+    if args.gui:
+        try:
+            from core.installer_gui import run_installer_gui
+            result = run_installer_gui()
+            return 0 if result and result.get('success') else 1
+        except ImportError:
+            print("❌ ERROR: Qt bindings not found. Please install PySide6:")
+            print("   pip install PySide6")
+            return 1
+        except Exception as e:
+            print(f"❌ ERROR: GUI failed to launch: {e}")
+            return 1
 
     if not args.manifest and not args.cleanup:
         parser.error("--manifest (-m) is required unless using --cleanup")
@@ -167,6 +185,37 @@ def main():
     if not comfy_path or not comfy_path.exists():
         print(f"❌ ERROR: ComfyUI path does not exist: {comfy_path}")
         return 1
+
+    # === BLENDER INSTALLATION (Windows only) ===
+    if not args.skip_blender and sys.platform == "win32":
+        print("\n" + "=" * 60)
+        print("BLENDER INSTALLATION CHECK")
+        print("=" * 60)
+
+        if comfyui_installer.check_blender_installed():
+            print("✓ Blender 4.5 LTS is already installed")
+        else:
+            print("⊘ Blender 4.5 LTS not found")
+            print("\nBlender is used for 3D object generation in ComfyUI.")
+            print("Would you like to install Blender 4.5 LTS? (y/n): ", end="")
+            try:
+                response = input().strip().lower()
+                if response == 'y':
+                    print("\n" + "=" * 60)
+                    print("INSTALLING BLENDER")
+                    print("=" * 60)
+                    success, message = comfyui_installer.install_blender()
+                    if success:
+                        print(f"✓ {message}")
+                    else:
+                        print(f"⚠ {message}")
+                        print("  You can continue without Blender or install it manually later.")
+                else:
+                    print("\nSkipping Blender installation.")
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nSkipping Blender installation.")
+
+        print("=" * 60 + "\n")
 
     # === CLEANUP MODE ===
     if args.cleanup:
