@@ -201,16 +201,30 @@ class ComfyUIInstaller:
                     timeout=5
                 )
 
+                # Ensure extract_to path is absolute and resolved
+                extract_to_abs = extract_to.resolve()
+
                 # 7z.exe exists, use it to extract
                 self.log(f"Using 7-Zip: {seven_zip_path}")
+                self.log(f"  Archive: {archive_path}")
+                self.log(f"  Destination: {extract_to_abs}")
+
                 result = subprocess.run(
-                    [seven_zip_path, 'x', str(archive_path), f'-o{extract_to}', '-y'],
+                    [seven_zip_path, 'x', str(archive_path), f'-o{extract_to_abs}', '-y'],
                     capture_output=True,
                     text=True,
                     timeout=600
                 )
 
                 if result.returncode == 0:
+                    # Debug: List what was extracted
+                    if extract_to_abs.exists():
+                        extracted_items = list(extract_to_abs.iterdir())
+                        self.log(f"  Extracted {len(extracted_items)} items to {extract_to_abs}")
+                        for item in extracted_items[:5]:  # Show first 5 items
+                            self.log(f"    - {item.name}")
+                        if len(extracted_items) > 5:
+                            self.log(f"    ... and {len(extracted_items) - 5} more items")
                     return True
                 else:
                     self.log(f"  7-Zip extraction failed: {result.stderr}", "WARNING")
@@ -314,15 +328,28 @@ class ComfyUIInstaller:
             return False
 
         try:
+            # Ensure extract_to path is absolute and resolved
+            extract_to_abs = extract_to.resolve()
             self.log(f"Using downloaded 7zr.exe for extraction...")
+            self.log(f"  Archive: {archive_path}")
+            self.log(f"  Destination: {extract_to_abs}")
+
             result = subprocess.run(
-                [str(seven_zr_path), 'x', str(archive_path), f'-o{extract_to}', '-y'],
+                [str(seven_zr_path), 'x', str(archive_path), f'-o{extract_to_abs}', '-y'],
                 capture_output=True,
                 text=True,
                 timeout=600
             )
 
             if result.returncode == 0:
+                # Debug: List what was extracted
+                if extract_to_abs.exists():
+                    extracted_items = list(extract_to_abs.iterdir())
+                    self.log(f"  Extracted {len(extracted_items)} items to {extract_to_abs}")
+                    for item in extracted_items[:5]:  # Show first 5 items
+                        self.log(f"    - {item.name}")
+                    if len(extracted_items) > 5:
+                        self.log(f"    ... and {len(extracted_items) - 5} more items")
                 return True
             else:
                 self.log(f"  7zr.exe extraction failed: {result.stderr}", "WARNING")
@@ -364,8 +391,23 @@ class ComfyUIInstaller:
                 return False, "Failed to extract ComfyUI"
 
             # Verify installation
+            self.log("\nVerifying installation...")
+            self.log(f"  Looking for ComfyUI files in: {self.install_path}")
+
+            # Debug: Check what exists
+            if self.install_path.exists():
+                items = list(self.install_path.iterdir())
+                self.log(f"  Found {len(items)} items in install directory:")
+                for item in items[:10]:
+                    self.log(f"    - {item.name}")
+                if len(items) > 10:
+                    self.log(f"    ... and {len(items) - 10} more items")
+            else:
+                self.log(f"  Install directory does not exist: {self.install_path}", "ERROR")
+
             if not self.check_existing_installation():
-                return False, "Installation verification failed"
+                self.log("  Looking for: ComfyUI/main.py and python_embeded/", "ERROR")
+                return False, "Installation verification failed - required files not found"
 
             # Set persistent environment variable
             self.log("\nSetting COMFYUI_BASE environment variable...")
