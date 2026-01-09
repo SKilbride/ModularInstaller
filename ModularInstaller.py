@@ -88,6 +88,13 @@ def main():
 
     args = parser.parse_args()
 
+    # === FROZEN EXECUTABLE DETECTION ===
+    # If running as a frozen executable (PyInstaller, cx_Freeze, etc.), force GUI mode
+    if getattr(sys, 'frozen', False):
+        if not args.gui:
+            print("Detected frozen executable - launching GUI mode...")
+            args.gui = True
+
     # === GUI MODE ===
     if args.gui:
         try:
