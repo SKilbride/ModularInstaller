@@ -216,6 +216,12 @@ def main():
                 print("\n\nSkipping Blender installation.")
 
         print("=" * 60 + "\n")
+    else:
+        # Blender installation skipped
+        if args.skip_blender:
+            print("⊘ Skipping Blender installation (--skip-blender flag used)")
+        elif sys.platform != "win32":
+            print("⊘ Skipping Blender installation (not supported on this platform)")
 
     # === CLEANUP MODE ===
     if args.cleanup:

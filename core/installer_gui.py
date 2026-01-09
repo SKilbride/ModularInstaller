@@ -63,6 +63,11 @@ class InstallerThread(QThread):
                         self.log_signal.emit("Installing Blender 4.5 LTS...")
                         success, message = installer.install_blender()
                         self.log_signal.emit(f"Blender: {message}")
+                else:
+                    if sys.platform == 'win32':
+                        self.log_signal.emit("⊘ Skipping Blender installation (disabled by user)")
+                    else:
+                        self.log_signal.emit("⊘ Skipping Blender installation (not supported on this platform)")
             else:
                 comfy_path = Path(self.config['comfy_path'])
                 python_executable = None
