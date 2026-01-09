@@ -5,6 +5,7 @@ import sys
 import zipfile
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from core.manifest_handler import ManifestHandler
@@ -12,15 +13,22 @@ from core.package_manager import PackageManager
 from core.comfyui_installer import ComfyUIInstaller
 
 
-def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> Path:
+def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> tuple[Path, Optional[Path]]:
     """
     Extract manifest.json from ZIP package.
-    Returns path to extracted manifest.json.
+    Also extracts InstallTemp folder if present.
+
+    Returns:
+        tuple: (manifest_path, install_temp_path)
+            - manifest_path: Path to extracted manifest file
+            - install_temp_path: Path to extracted InstallTemp folder, or None if not present
     """
     print(f"[1/3] Extracting manifest from package...")
 
     # Create temporary extraction directory
     temp_dir.mkdir(parents=True, exist_ok=True)
+
+    install_temp_path = None
 
     with zipfile.ZipFile(zip_path, 'r') as zf:
         # Look for manifest.json at root or in common locations
@@ -40,7 +48,20 @@ def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> Path:
         manifest_path = temp_dir / manifest_file
 
         print(f"✓ Manifest extracted to: {manifest_path}")
-        return manifest_path
+
+        # Check for InstallTemp folder and extract it
+        install_temp_files = [f for f in zf.namelist() if f.startswith('InstallTemp/')]
+        if install_temp_files:
+            print(f"Found InstallTemp folder in package - extracting {len(install_temp_files)} files...")
+            install_temp_path = temp_dir / "InstallTemp"
+
+            # Extract all InstallTemp files
+            for file in install_temp_files:
+                zf.extract(file, temp_dir)
+
+            print(f"✓ InstallTemp extracted to: {install_temp_path}")
+
+        return manifest_path, install_temp_path
 
 
 def main():
@@ -266,10 +287,11 @@ def main():
         print("=" * 60 + "\n")
 
         # === HANDLE MANIFEST SOURCE ===
+        install_temp_path = None  # Will be set if InstallTemp folder exists in ZIP
         if manifest_path.suffix.lower() == '.zip':
             # Extract manifest from ZIP package
             temp_dir = Path(args.temp_path) / f"manifest_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}" if args.temp_path else comfy_path / f"temp_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            manifest_path = extract_manifest_from_zip(manifest_path, temp_dir)
+            manifest_path, install_temp_path = extract_manifest_from_zip(manifest_path, temp_dir)
 
             # Also use PackageManager to extract bundled files if present
             print("\n[2/3] Extracting bundled files from package...")
@@ -301,7 +323,8 @@ def main():
             log_file=log_file,
             max_workers=args.workers,
             resume_downloads=not args.no_resume,
-            python_executable=python_executable
+            python_executable=python_executable,
+            install_temp_path=install_temp_path
         )
 
         # Load and validate manifest

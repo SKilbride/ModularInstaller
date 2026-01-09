@@ -2,8 +2,10 @@
 
 import sys
 import os
+import zipfile
 from pathlib import Path
 from typing import Optional
+from datetime import datetime
 
 try:
     from qtpy.QtWidgets import (
@@ -96,13 +98,52 @@ class InstallerThread(QThread):
 
             # Process manifest
             manifest_path = Path(self.config['manifest_path'])
+            install_temp_path = None
+
+            # Handle ZIP packages with InstallTemp folder
+            if manifest_path.suffix.lower() == '.zip':
+                self.log_signal.emit(f"Extracting manifest from ZIP: {manifest_path.name}")
+
+                # Create temp directory for extraction
+                temp_dir = comfy_path / f"temp_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                temp_dir.mkdir(parents=True, exist_ok=True)
+
+                with zipfile.ZipFile(manifest_path, 'r') as zf:
+                    # Extract manifest
+                    manifest_locations = ['manifest.json', 'manifest.yaml', 'manifest.yml']
+                    manifest_file = None
+
+                    for loc in manifest_locations:
+                        if loc in zf.namelist():
+                            manifest_file = loc
+                            break
+
+                    if not manifest_file:
+                        raise FileNotFoundError("No manifest.json/yaml found in ZIP package")
+
+                    zf.extract(manifest_file, temp_dir)
+                    manifest_path = temp_dir / manifest_file
+                    self.log_signal.emit(f"✓ Manifest extracted: {manifest_file}")
+
+                    # Check for InstallTemp folder and extract it
+                    install_temp_files = [f for f in zf.namelist() if f.startswith('InstallTemp/')]
+                    if install_temp_files:
+                        self.log_signal.emit(f"Found InstallTemp folder - extracting {len(install_temp_files)} files...")
+                        install_temp_path = temp_dir / "InstallTemp"
+
+                        for file in install_temp_files:
+                            zf.extract(file, temp_dir)
+
+                        self.log_signal.emit(f"✓ InstallTemp extracted")
+
             self.log_signal.emit(f"Loading manifest: {manifest_path.name}")
 
             handler = ManifestHandler(
                 manifest_path=manifest_path,
                 comfy_path=comfy_path,
                 python_executable=python_executable,
-                max_workers=self.config.get('workers', 4)
+                max_workers=self.config.get('workers', 4),
+                install_temp_path=install_temp_path
             )
 
             handler.load_manifest()

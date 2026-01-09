@@ -19,12 +19,13 @@ import time
 class ManifestHandler:
     """Handles manifest-based installation of ComfyUI resources."""
 
-    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip']
+    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip', 'install_temp']
     SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config']
-    SUPPORTED_PATH_BASES = ['comfyui', 'home', 'temp', 'appdata', 'absolute']
+    SUPPORTED_PATH_BASES = ['comfyui', 'home', 'temp', 'appdata', 'absolute', 'install_temp']
 
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
-                 max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None):
+                 max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None,
+                 install_temp_path: Optional[Path] = None):
         """
         Initialize ManifestHandler.
 
@@ -35,6 +36,7 @@ class ManifestHandler:
             max_workers: Number of parallel download workers (default: 4)
             resume_downloads: Enable resume capability for interrupted downloads (default: True)
             python_executable: Optional path to Python executable for pip installs (default: sys.executable)
+            install_temp_path: Optional path to InstallTemp folder from ZIP package
         """
         self.manifest_path = Path(manifest_path)
         self.comfy_path = Path(comfy_path)
@@ -45,6 +47,7 @@ class ManifestHandler:
         self.resume_downloads = resume_downloads
         self.python_executable = Path(python_executable) if python_executable else Path(sys.executable)
         self.partial_download_dir = self.comfy_path / ".partial_downloads"
+        self.install_temp_path = Path(install_temp_path) if install_temp_path else None
         
         # Track what was actually downloaded vs skipped
         self.downloaded_items = []
@@ -71,7 +74,7 @@ class ManifestHandler:
         Resolve base path for different path_base types.
 
         Args:
-            path_base: Type of base path (comfyui, home, temp, appdata, absolute)
+            path_base: Type of base path (comfyui, home, temp, appdata, absolute, install_temp)
 
         Returns:
             Resolved base path
@@ -94,6 +97,12 @@ class ManifestHandler:
                 return Path.home() / '.local' / 'share'
         elif path_base == 'absolute':
             return Path('/')  # Will be replaced by absolute path in item
+        elif path_base == 'install_temp':
+            if self.install_temp_path and self.install_temp_path.exists():
+                return self.install_temp_path
+            else:
+                self.log(f"⚠ InstallTemp path not available, defaulting to comfyui", "WARNING")
+                return self.comfy_path
         else:
             self.log(f"⚠ Unknown path_base: {path_base}, defaulting to comfyui", "WARNING")
             return self.comfy_path
@@ -377,6 +386,8 @@ class ManifestHandler:
             self._copy_from_local(item)
         elif item['source'] == 'pip':
             self._install_pip_package(item)
+        elif item['source'] == 'install_temp':
+            self._copy_from_install_temp(item)
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
     
@@ -392,6 +403,8 @@ class ManifestHandler:
             return f"Local: {item.get('source_path', 'unknown')}"
         elif item['source'] == 'pip':
             return f"PyPI: {item.get('package', item['name'])}"
+        elif item['source'] == 'install_temp':
+            return f"InstallTemp: {item.get('source_path', 'unknown')}"
         return item['source']
     
     def _get_partial_path(self, target_path: str) -> Path:
@@ -785,12 +798,12 @@ class ManifestHandler:
 
         source = Path(item['source_path'])
         dest = self.resolve_item_path(item)
-        
+
         if not source.exists():
             raise FileNotFoundError(f"Source path not found: {source}")
-        
+
         dest.parent.mkdir(parents=True, exist_ok=True)
-        
+
         if source.is_dir():
             # Copy directory with progress
             self.log(f"  Copying directory...")
@@ -799,7 +812,7 @@ class ManifestHandler:
             # Copy file with progress
             file_size = source.stat().st_size
             if file_size > 10 * 1024 * 1024:  # Show progress for files > 10MB
-                with tqdm(total=file_size, unit='B', unit_scale=True, 
+                with tqdm(total=file_size, unit='B', unit_scale=True,
                          desc=item['name'][:30], ncols=80) as pbar:
                     with open(source, 'rb') as fsrc:
                         with open(dest, 'wb') as fdst:
@@ -811,8 +824,48 @@ class ManifestHandler:
                                 pbar.update(len(buf))
             else:
                 shutil.copy2(source, dest)
-        
+
         self.log(f"✓ {item['name']} copied")
+
+    def _copy_from_install_temp(self, item: Dict):
+        """Copy from InstallTemp folder (bundled in ZIP package)."""
+        if not self.install_temp_path or not self.install_temp_path.exists():
+            raise FileNotFoundError(f"InstallTemp folder not available. Make sure the manifest is from a ZIP package with InstallTemp folder.")
+
+        self.log(f"↓ Copying {item['name']} from InstallTemp...")
+
+        # Resolve source path relative to InstallTemp folder
+        source_relative = item['source_path']
+        source = self.install_temp_path / source_relative
+        dest = self.resolve_item_path(item)
+
+        if not source.exists():
+            raise FileNotFoundError(f"Source path not found in InstallTemp: {source}")
+
+        dest.parent.mkdir(parents=True, exist_ok=True)
+
+        if source.is_dir():
+            # Copy directory with progress
+            self.log(f"  Copying directory from InstallTemp...")
+            shutil.copytree(source, dest, dirs_exist_ok=True)
+        else:
+            # Copy file with progress
+            file_size = source.stat().st_size
+            if file_size > 10 * 1024 * 1024:  # Show progress for files > 10MB
+                with tqdm(total=file_size, unit='B', unit_scale=True,
+                         desc=item['name'][:30], ncols=80) as pbar:
+                    with open(source, 'rb') as fsrc:
+                        with open(dest, 'wb') as fdst:
+                            while True:
+                                buf = fsrc.read(8192)
+                                if not buf:
+                                    break
+                                fdst.write(buf)
+                                pbar.update(len(buf))
+            else:
+                shutil.copy2(source, dest)
+
+        self.log(f"✓ {item['name']} copied from InstallTemp")
 
     def _install_pip_package(self, item: Dict):
         """Install a Python package via pip."""
