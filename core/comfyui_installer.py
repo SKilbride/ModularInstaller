@@ -28,7 +28,14 @@ class ComfyUIInstaller:
             install_path: Path where ComfyUI should be installed (default: ~/ComfyUI_BP)
             log_file: Optional log file path
         """
-        self.install_path = Path(install_path) if install_path else self.DEFAULT_INSTALL_PATH
+        if install_path:
+            # Ensure path is properly expanded (handle ~, environment variables, etc.)
+            path_str = str(install_path)
+            expanded_path = os.path.expanduser(os.path.expandvars(path_str))
+            self.install_path = Path(expanded_path).resolve()
+        else:
+            self.install_path = self.DEFAULT_INSTALL_PATH
+
         self.log_file = log_file
 
     def log(self, message: str, level: str = "INFO"):
@@ -127,55 +134,107 @@ class ComfyUIInstaller:
         """
         Extract ComfyUI 7z archive.
 
+        The archive contains a top-level directory called 'ComfyUI_windows_portable'.
+        We extract to temp first, then move the contents to the final location.
+
         Args:
             archive_path: Path to .7z file
-            extract_to: Directory to extract to
+            extract_to: Final directory to install to
 
         Returns:
             True if successful, False otherwise
         """
-        self.log(f"Extracting ComfyUI to: {extract_to}")
+        self.log(f"Extracting ComfyUI...")
+
+        # Extract to temp directory first (same directory as the archive)
+        temp_extract = archive_path.parent / "temp_extract"
 
         try:
-            # Ensure extraction directory exists
-            extract_to.mkdir(parents=True, exist_ok=True)
+            # Ensure temp extraction directory exists
+            temp_extract.mkdir(parents=True, exist_ok=True)
+
+            # Try extraction methods
+            extraction_success = False
 
             # Try method 1: Use system 7z.exe (most reliable)
-            if self._try_extract_with_7zip(archive_path, extract_to):
+            if self._try_extract_with_7zip(archive_path, temp_extract):
                 self.log(f"✓ Extraction complete (using 7-Zip)")
-                return True
+                extraction_success = True
 
             # Try method 2: Use PowerShell Expand-Archive (Windows fallback)
-            if sys.platform == "win32" and self._try_extract_with_powershell(archive_path, extract_to):
+            if not extraction_success and sys.platform == "win32" and self._try_extract_with_powershell(archive_path, temp_extract):
                 self.log(f"✓ Extraction complete (using PowerShell)")
-                return True
+                extraction_success = True
 
             # Try method 3: Use py7zr (may fail with BCJ2 filter)
-            self.log("Trying py7zr extraction...")
-            try:
-                with py7zr.SevenZipFile(archive_path, mode='r') as archive:
-                    archive.extractall(path=extract_to)
-                self.log(f"✓ Extraction complete (using py7zr)")
-                return True
-            except Exception as e:
-                if "BCJ2" in str(e):
-                    self.log(f"✗ py7zr doesn't support this archive format", "ERROR")
-                else:
-                    raise
+            if not extraction_success:
+                self.log("Trying py7zr extraction...")
+                try:
+                    with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+                        archive.extractall(path=temp_extract)
+                    self.log(f"✓ Extraction complete (using py7zr)")
+                    extraction_success = True
+                except Exception as e:
+                    if "BCJ2" in str(e):
+                        self.log(f"✗ py7zr doesn't support this archive format", "ERROR")
+                    else:
+                        raise
 
             # Try method 4: Download and use 7zr.exe (final fallback)
-            self.log("Attempting to download standalone 7-Zip extractor...")
-            if self._try_extract_with_downloaded_7zr(archive_path, extract_to):
-                self.log(f"✓ Extraction complete (using downloaded 7zr.exe)")
-                return True
+            if not extraction_success:
+                self.log("Attempting to download standalone 7-Zip extractor...")
+                if self._try_extract_with_downloaded_7zr(archive_path, temp_extract):
+                    self.log(f"✓ Extraction complete (using downloaded 7zr.exe)")
+                    extraction_success = True
 
             # All methods failed
-            self.log(f"✗ All extraction methods failed", "ERROR")
-            self.log(f"  Please install 7-Zip manually from https://www.7-zip.org/", "ERROR")
-            return False
+            if not extraction_success:
+                self.log(f"✗ All extraction methods failed", "ERROR")
+                self.log(f"  Please install 7-Zip manually from https://www.7-zip.org/", "ERROR")
+                return False
+
+            # Now move contents from ComfyUI_windows_portable to final location
+            self.log(f"Moving files to final location: {extract_to}")
+
+            # Find the ComfyUI_windows_portable directory
+            portable_dir = temp_extract / "ComfyUI_windows_portable"
+
+            if not portable_dir.exists():
+                # Check if files were extracted directly
+                extracted_items = list(temp_extract.iterdir())
+                self.log(f"  Extracted items in temp: {[item.name for item in extracted_items]}", "WARNING")
+                self.log(f"  Looking for ComfyUI_windows_portable folder...", "ERROR")
+                return False
+
+            # Create final directory
+            extract_to.mkdir(parents=True, exist_ok=True)
+
+            # Move all contents from portable_dir to extract_to
+            items_to_move = list(portable_dir.iterdir())
+            self.log(f"  Moving {len(items_to_move)} items...")
+
+            for item in items_to_move:
+                dest = extract_to / item.name
+                if dest.exists():
+                    # Remove existing item
+                    if dest.is_dir():
+                        shutil.rmtree(dest)
+                    else:
+                        dest.unlink()
+                shutil.move(str(item), str(dest))
+
+            self.log(f"✓ Successfully moved all files to {extract_to}")
+
+            # Cleanup temp extraction directory
+            shutil.rmtree(temp_extract, ignore_errors=True)
+
+            return True
 
         except Exception as e:
             self.log(f"✗ Extraction failed: {e}", "ERROR")
+            # Cleanup on failure
+            if temp_extract.exists():
+                shutil.rmtree(temp_extract, ignore_errors=True)
             return False
 
     def _try_extract_with_7zip(self, archive_path: Path, extract_to: Path) -> bool:

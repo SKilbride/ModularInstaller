@@ -40,7 +40,9 @@ class InstallerThread(QThread):
             # Install/detect ComfyUI
             if not self.config.get('comfy_path'):
                 self.log_signal.emit("Checking for ComfyUI installation...")
-                installer = ComfyUIInstaller(install_path=Path(self.config.get('install_path', '~/ComfyUI_BP')))
+                install_path_str = self.config.get('install_path', '~/ComfyUI_BP')
+                install_path = Path(os.path.expanduser(install_path_str))
+                installer = ComfyUIInstaller(install_path=install_path)
 
                 if not installer.check_existing_installation():
                     self.log_signal.emit("ComfyUI not found. Installing...")
