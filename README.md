@@ -467,19 +467,49 @@ python ModularInstaller.py -c C:/ComfyUI --cleanup
 
 ### Gated Models (HuggingFace)
 
-Some models require license acceptance. To download gated models:
+Some models (like FLUX) require license acceptance and authentication. The installer **automatically prompts** for a token when gated models are detected.
 
-1. Accept the license on HuggingFace website
-2. Create a HuggingFace access token with read permissions
-3. Set environment variable:
-   ```bash
-   # Windows
-   set HF_TOKEN=your_token_here
+**Automatic Token Prompt:**
+When the installer detects gated models in the manifest and no `HF_TOKEN` is set, it will:
+- **GUI Mode**: Show a password-protected dialog with instructions
+- **CLI Mode**: Prompt in the terminal for token entry
 
-   # Linux/Mac
-   export HF_TOKEN=your_token_here
-   ```
-4. Run installer normally
+**Manual Token Setup (Alternative):**
+You can also set the token as an environment variable to skip the prompt:
+
+```bash
+# Windows (Command Prompt)
+set HF_TOKEN=your_token_here
+
+# Windows (PowerShell)
+$env:HF_TOKEN="your_token_here"
+
+# Linux/Mac
+export HF_TOKEN=your_token_here
+```
+
+**To get a token:**
+1. Visit https://huggingface.co/settings/tokens
+2. Create a new token with **Read** permission
+3. Accept the license for gated models on their HuggingFace pages
+4. Enter the token when prompted (or set `HF_TOKEN` environment variable)
+
+**Marking models as gated in manifest:**
+```json
+{
+  "name": "FLUX.1 Dev",
+  "type": "model",
+  "source": "huggingface",
+  "repo": "black-forest-labs/FLUX.1-dev",
+  "file": "flux1-dev.safetensors",
+  "path": "models/unet/flux1-dev.safetensors",
+  "path_base": "comfyui",
+  "gated": true,
+  "required": true
+}
+```
+
+The `"gated": true` flag tells the installer that this model requires authentication.
 
 ### Resume Interrupted Downloads
 
