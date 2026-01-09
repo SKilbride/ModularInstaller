@@ -204,6 +204,22 @@ class InstallerWindow(QWidget):
         self.setMinimumSize(700, 600)
         self.resize(700, 600)
 
+        # Check for bundled package.zip if running as frozen executable
+        bundled_package = None
+        if getattr(sys, 'frozen', False):
+            # Get the directory where the executable is located
+            if hasattr(sys, '_MEIPASS'):
+                # PyInstaller creates a temp folder and stores path in _MEIPASS
+                # But we want the actual executable location
+                exe_dir = Path(sys.executable).parent
+            else:
+                exe_dir = Path(sys.executable).parent
+
+            package_zip_path = exe_dir / "package.zip"
+            if package_zip_path.exists():
+                bundled_package = package_zip_path
+                print(f"Found bundled package: {bundled_package}")
+
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(12)
@@ -235,11 +251,22 @@ class InstallerWindow(QWidget):
         # Manifest Path
         manifest_layout = QHBoxLayout()
         self.manifest_path_edit = QLineEdit()
-        self.manifest_path_edit.setPlaceholderText("Select manifest.json or package.zip")
-        manifest_browse_btn = QPushButton("Browse...")
-        manifest_browse_btn.clicked.connect(self.browse_manifest)
+        self.manifest_browse_btn = QPushButton("Browse...")
+        self.manifest_browse_btn.clicked.connect(self.browse_manifest)
+
+        if bundled_package:
+            # Use bundled package and disable editing
+            self.manifest_path_edit.setText(str(bundled_package))
+            self.manifest_path_edit.setReadOnly(True)
+            self.manifest_path_edit.setPlaceholderText("Using bundled package")
+            self.manifest_browse_btn.setEnabled(False)
+            self.manifest_browse_btn.setToolTip("Package bundled with installer")
+        else:
+            # Allow user to select manifest
+            self.manifest_path_edit.setPlaceholderText("Select manifest.json or package.zip")
+
         manifest_layout.addWidget(self.manifest_path_edit)
-        manifest_layout.addWidget(manifest_browse_btn)
+        manifest_layout.addWidget(self.manifest_browse_btn)
         install_layout.addRow("Manifest File*:", manifest_layout)
 
         main_layout.addWidget(install_group)

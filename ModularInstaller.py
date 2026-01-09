@@ -112,8 +112,19 @@ def main():
     # === FROZEN EXECUTABLE DETECTION ===
     # If running as a frozen executable (PyInstaller, cx_Freeze, etc.), force GUI mode
     if getattr(sys, 'frozen', False):
+        # Check for bundled package.zip
+        if hasattr(sys, '_MEIPASS'):
+            exe_dir = Path(sys.executable).parent
+        else:
+            exe_dir = Path(sys.executable).parent
+
+        bundled_package = exe_dir / "package.zip"
+
         if not args.gui:
-            print("Detected frozen executable - launching GUI mode...")
+            if bundled_package.exists():
+                print("Detected frozen executable with bundled package.zip - launching GUI mode...")
+            else:
+                print("Detected frozen executable - launching GUI mode...")
             args.gui = True
 
     # === GUI MODE ===
