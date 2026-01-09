@@ -207,18 +207,24 @@ class InstallerWindow(QWidget):
         # Check for bundled package.zip if running as frozen executable
         bundled_package = None
         if getattr(sys, 'frozen', False):
-            # Get the directory where the executable is located
-            if hasattr(sys, '_MEIPASS'):
-                # PyInstaller creates a temp folder and stores path in _MEIPASS
-                # But we want the actual executable location
-                exe_dir = Path(sys.executable).parent
-            else:
-                exe_dir = Path(sys.executable).parent
+            # Check two locations:
+            # 1. Inside the executable (PyInstaller --add-data)
+            # 2. External file alongside the executable
 
-            package_zip_path = exe_dir / "package.zip"
-            if package_zip_path.exists():
-                bundled_package = package_zip_path
-                print(f"Found bundled package: {bundled_package}")
+            if hasattr(sys, '_MEIPASS'):
+                # PyInstaller extracts bundled data to _MEIPASS temp directory
+                internal_package = Path(sys._MEIPASS) / "package.zip"
+                if internal_package.exists():
+                    bundled_package = internal_package
+                    print(f"Found package.zip bundled inside executable: {bundled_package}")
+
+            if not bundled_package:
+                # Check for external package.zip alongside the executable
+                exe_dir = Path(sys.executable).parent
+                external_package = exe_dir / "package.zip"
+                if external_package.exists():
+                    bundled_package = external_package
+                    print(f"Found package.zip alongside executable: {bundled_package}")
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
