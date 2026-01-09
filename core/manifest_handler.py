@@ -25,7 +25,7 @@ class ManifestHandler:
 
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
                  max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None,
-                 install_temp_path: Optional[Path] = None):
+                 install_temp_path: Optional[Path] = None, hf_token: Optional[str] = None):
         """
         Initialize ManifestHandler.
 
@@ -37,12 +37,14 @@ class ManifestHandler:
             resume_downloads: Enable resume capability for interrupted downloads (default: True)
             python_executable: Optional path to Python executable for pip installs (default: sys.executable)
             install_temp_path: Optional path to InstallTemp folder from ZIP package
+            hf_token: Optional HuggingFace token for gated models (overrides HF_TOKEN env var)
         """
         self.manifest_path = Path(manifest_path)
         self.comfy_path = Path(comfy_path)
         self.log_file = log_file
         self.manifest = None
-        self.hf_token = os.getenv('HF_TOKEN')
+        # Use provided token, or fall back to environment variable
+        self.hf_token = hf_token or os.getenv('HF_TOKEN')
         self.max_workers = max_workers
         self.resume_downloads = resume_downloads
         self.python_executable = Path(python_executable) if python_executable else Path(sys.executable)
@@ -68,6 +70,30 @@ class ManifestHandler:
         if self.log_file:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(formatted_message + '\n')
+
+    def has_gated_models(self) -> bool:
+        """
+        Check if manifest contains any gated models from HuggingFace.
+
+        Returns:
+            True if manifest contains gated models, False otherwise
+        """
+        if not self.manifest:
+            return False
+
+        for item in self.manifest.get('resources', []):
+            if item.get('source') == 'huggingface' and item.get('gated', False):
+                return True
+        return False
+
+    def set_hf_token(self, token: str):
+        """
+        Set HuggingFace token for accessing gated models.
+
+        Args:
+            token: HuggingFace access token
+        """
+        self.hf_token = token.strip() if token else None
 
     def resolve_path_base(self, path_base: str) -> Path:
         """

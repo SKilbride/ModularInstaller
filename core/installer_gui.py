@@ -11,7 +11,7 @@ try:
     from qtpy.QtWidgets import (
         QApplication, QWidget, QVBoxLayout, QHBoxLayout, QGroupBox,
         QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
-        QCheckBox, QFormLayout, QTextEdit, QProgressBar
+        QCheckBox, QFormLayout, QTextEdit, QProgressBar, QInputDialog
     )
     from qtpy.QtCore import Qt, QThread, Signal
     from qtpy.QtGui import QFont, QIcon
@@ -25,10 +25,12 @@ class InstallerThread(QThread):
     log_signal = Signal(str)
     progress_signal = Signal(int)
     finished_signal = Signal(bool, str)
+    request_hf_token_signal = Signal()  # Signal to request HF token from main thread
 
     def __init__(self, config):
         super().__init__()
         self.config = config
+        self.hf_token = None  # Will be set by main thread if requested
 
     def run(self):
         """Run the installation in a separate thread."""
@@ -148,6 +150,29 @@ class InstallerThread(QThread):
 
             handler.load_manifest()
             handler.validate_manifest()
+
+            # Check for gated models and prompt for HF token if needed
+            if handler.has_gated_models() and not handler.hf_token:
+                self.log_signal.emit("\n⚠ Gated models detected - HuggingFace token required")
+                # Request token from main thread and wait for response
+                self.request_hf_token_signal.emit()
+
+                # Wait for token to be set (with timeout)
+                import time
+                timeout = 60  # 60 seconds timeout
+                start_time = time.time()
+                while self.hf_token is None and (time.time() - start_time) < timeout:
+                    time.sleep(0.1)
+
+                if self.hf_token:
+                    handler.set_hf_token(self.hf_token)
+                    self.log_signal.emit("✓ HuggingFace token provided")
+                elif self.hf_token == "":
+                    # User cancelled
+                    self.log_signal.emit("⚠ No token provided - gated models may fail to download")
+                else:
+                    # Timeout
+                    self.log_signal.emit("⚠ Token prompt timed out - gated models may fail to download")
 
             self.log_signal.emit("Downloading and installing items...")
             handler.download_items(
@@ -385,6 +410,7 @@ class InstallerWindow(QWidget):
         self.installer_thread = InstallerThread(config)
         self.installer_thread.log_signal.connect(self.append_log)
         self.installer_thread.finished_signal.connect(self.installation_finished)
+        self.installer_thread.request_hf_token_signal.connect(self.prompt_for_hf_token)
         self.installer_thread.start()
 
     def append_log(self, message: str):
@@ -413,6 +439,27 @@ class InstallerWindow(QWidget):
                 "Installation Failed",
                 f"Installation failed:\n\n{message}"
             )
+
+    def prompt_for_hf_token(self):
+        """Prompt user for HuggingFace token."""
+        text, ok = QInputDialog.getText(
+            self,
+            "HuggingFace Token Required",
+            "This package includes gated models that require a HuggingFace token.\n\n"
+            "To get a token:\n"
+            "1. Visit https://huggingface.co/settings/tokens\n"
+            "2. Create a new token with 'Read' permission\n"
+            "3. Accept the license for gated models on HuggingFace\n"
+            "4. Paste the token below\n\n"
+            "Token:",
+            QLineEdit.Password
+        )
+
+        if ok and text:
+            self.installer_thread.hf_token = text.strip()
+        else:
+            # User cancelled - set empty string to signal cancellation
+            self.installer_thread.hf_token = ""
 
 
 if __name__ == "__main__":
