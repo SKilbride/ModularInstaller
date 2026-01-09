@@ -139,15 +139,114 @@ class ComfyUIInstaller:
             # Ensure extraction directory exists
             extract_to.mkdir(parents=True, exist_ok=True)
 
-            # Extract with py7zr
-            with py7zr.SevenZipFile(archive_path, mode='r') as archive:
-                archive.extractall(path=extract_to)
+            # Try method 1: Use system 7z.exe (most reliable)
+            if self._try_extract_with_7zip(archive_path, extract_to):
+                self.log(f"✓ Extraction complete (using 7-Zip)")
+                return True
 
-            self.log(f"✓ Extraction complete")
-            return True
+            # Try method 2: Use PowerShell Expand-Archive (Windows fallback)
+            if sys.platform == "win32" and self._try_extract_with_powershell(archive_path, extract_to):
+                self.log(f"✓ Extraction complete (using PowerShell)")
+                return True
+
+            # Try method 3: Use py7zr (may fail with BCJ2 filter)
+            self.log("Trying py7zr extraction...")
+            try:
+                with py7zr.SevenZipFile(archive_path, mode='r') as archive:
+                    archive.extractall(path=extract_to)
+                self.log(f"✓ Extraction complete (using py7zr)")
+                return True
+            except Exception as e:
+                if "BCJ2" in str(e):
+                    self.log(f"✗ py7zr doesn't support this archive format", "ERROR")
+                else:
+                    raise
+
+            # All methods failed
+            self.log(f"✗ All extraction methods failed", "ERROR")
+            self.log(f"  Please install 7-Zip from https://www.7-zip.org/", "ERROR")
+            return False
 
         except Exception as e:
             self.log(f"✗ Extraction failed: {e}", "ERROR")
+            return False
+
+    def _try_extract_with_7zip(self, archive_path: Path, extract_to: Path) -> bool:
+        """
+        Try to extract using 7z.exe command-line tool.
+
+        Returns:
+            True if successful, False if 7z.exe not found
+        """
+        # Common 7-Zip installation paths
+        possible_7z_paths = [
+            r"C:\Program Files\7-Zip\7z.exe",
+            r"C:\Program Files (x86)\7-Zip\7z.exe",
+            "7z",  # Try PATH
+        ]
+
+        for seven_zip_path in possible_7z_paths:
+            try:
+                # Test if 7z exists
+                result = subprocess.run(
+                    [seven_zip_path],
+                    capture_output=True,
+                    timeout=5
+                )
+
+                # 7z.exe exists, use it to extract
+                self.log(f"Using 7-Zip: {seven_zip_path}")
+                result = subprocess.run(
+                    [seven_zip_path, 'x', str(archive_path), f'-o{extract_to}', '-y'],
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+                if result.returncode == 0:
+                    return True
+                else:
+                    self.log(f"  7-Zip extraction failed: {result.stderr}", "WARNING")
+                    return False
+
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                continue
+            except Exception as e:
+                self.log(f"  7-Zip error: {e}", "WARNING")
+                continue
+
+        return False
+
+    def _try_extract_with_powershell(self, archive_path: Path, extract_to: Path) -> bool:
+        """
+        Try to extract using PowerShell (Windows only, but won't work for .7z).
+
+        Note: PowerShell Expand-Archive only supports .zip, not .7z
+        This is kept as a fallback but will likely not work for ComfyUI.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        # PowerShell can't extract .7z files, only .zip
+        if archive_path.suffix.lower() == '.7z':
+            return False
+
+        try:
+            cmd = [
+                'powershell', '-Command',
+                f'Expand-Archive -Path "{archive_path}" -DestinationPath "{extract_to}" -Force'
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+
+            return result.returncode == 0
+
+        except Exception:
             return False
 
     def install_comfyui(self, force_reinstall: bool = False) -> Tuple[bool, Optional[str]]:
