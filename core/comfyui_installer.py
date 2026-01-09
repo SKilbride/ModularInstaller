@@ -18,6 +18,7 @@ class ComfyUIInstaller:
     COMFYUI_DOWNLOAD_URL = "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
     DEFAULT_INSTALL_PATH = Path(os.path.expanduser("~")) / "ComfyUI_BP"
     BLENDER_WINGET_ID = "BlenderFoundation.Blender.LTS.4.5"
+    SEVENZIP_STANDALONE_URL = "https://www.7-zip.org/a/7zr.exe"
 
     def __init__(self, install_path: Optional[Path] = None, log_file: Optional[Path] = None):
         """
@@ -162,9 +163,15 @@ class ComfyUIInstaller:
                 else:
                     raise
 
+            # Try method 4: Download and use 7zr.exe (final fallback)
+            self.log("Attempting to download standalone 7-Zip extractor...")
+            if self._try_extract_with_downloaded_7zr(archive_path, extract_to):
+                self.log(f"✓ Extraction complete (using downloaded 7zr.exe)")
+                return True
+
             # All methods failed
             self.log(f"✗ All extraction methods failed", "ERROR")
-            self.log(f"  Please install 7-Zip from https://www.7-zip.org/", "ERROR")
+            self.log(f"  Please install 7-Zip manually from https://www.7-zip.org/", "ERROR")
             return False
 
         except Exception as e:
@@ -247,6 +254,82 @@ class ComfyUIInstaller:
             return result.returncode == 0
 
         except Exception:
+            return False
+
+    def _download_7zr(self) -> Optional[Path]:
+        """
+        Download standalone 7zr.exe to a temp location.
+
+        Returns:
+            Path to downloaded 7zr.exe if successful, None otherwise
+        """
+        try:
+            # Store in temp directory
+            temp_dir = Path(os.path.expanduser("~")) / "temp_comfyui_install"
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            seven_zr_path = temp_dir / "7zr.exe"
+
+            # Check if already downloaded
+            if seven_zr_path.exists():
+                self.log(f"Using cached 7zr.exe: {seven_zr_path}")
+                return seven_zr_path
+
+            self.log(f"Downloading standalone 7-Zip extractor (7zr.exe)...")
+
+            response = requests.get(self.SEVENZIP_STANDALONE_URL, stream=True, timeout=30)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+
+            with open(seven_zr_path, 'wb') as f:
+                if total_size > 0:
+                    with tqdm(total=total_size, unit='B', unit_scale=True,
+                             desc="Downloading 7zr.exe", ncols=80) as pbar:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            if chunk:
+                                f.write(chunk)
+                                pbar.update(len(chunk))
+                else:
+                    # No content-length header, download without progress bar
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+
+            self.log(f"✓ Downloaded 7zr.exe to: {seven_zr_path}")
+            return seven_zr_path
+
+        except Exception as e:
+            self.log(f"✗ Failed to download 7zr.exe: {e}", "WARNING")
+            return None
+
+    def _try_extract_with_downloaded_7zr(self, archive_path: Path, extract_to: Path) -> bool:
+        """
+        Try to extract using downloaded 7zr.exe.
+
+        Returns:
+            True if successful, False otherwise
+        """
+        seven_zr_path = self._download_7zr()
+        if not seven_zr_path:
+            return False
+
+        try:
+            self.log(f"Using downloaded 7zr.exe for extraction...")
+            result = subprocess.run(
+                [str(seven_zr_path), 'x', str(archive_path), f'-o{extract_to}', '-y'],
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+
+            if result.returncode == 0:
+                return True
+            else:
+                self.log(f"  7zr.exe extraction failed: {result.stderr}", "WARNING")
+                return False
+
+        except Exception as e:
+            self.log(f"  7zr.exe error: {e}", "WARNING")
             return False
 
     def install_comfyui(self, force_reinstall: bool = False) -> Tuple[bool, Optional[str]]:
