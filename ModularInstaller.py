@@ -160,9 +160,33 @@ def main():
 
     # Determine ComfyUI path
     if args.comfy_path:
-        # User specified path
+        # User specified path - check for embedded Python
         comfy_path = Path(args.comfy_path).resolve()
-        python_executable = None  # Use system Python
+
+        # Try to find embedded Python at the specified path
+        # Need to go up to the install root to check for python_embeded
+        install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path
+
+        possible_python_paths = [
+            install_root / "python_embeded" / "python.exe",
+            install_root / "python_embedded" / "python.exe",
+            comfy_path / ".." / "python_embeded" / "python.exe",
+            comfy_path / ".." / "python_embedded" / "python.exe",
+        ]
+
+        python_executable = None
+        for py_path in possible_python_paths:
+            resolved_path = py_path.resolve()
+            if resolved_path.exists():
+                python_executable = resolved_path
+                print(f"✓ Found embedded Python: {python_executable}")
+                break
+
+        if not python_executable:
+            print(f"⚠ No embedded Python found at {comfy_path}")
+            print(f"  Will use system Python for pip installations: {sys.executable}")
+            print(f"  Note: Packages may not be visible to ComfyUI")
+            python_executable = None  # Will fall back to sys.executable in ManifestHandler
     else:
         # Auto-detect or install ComfyUI
         print("\n" + "=" * 60)

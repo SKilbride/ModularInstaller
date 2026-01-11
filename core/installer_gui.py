@@ -95,8 +95,37 @@ class InstallerThread(QThread):
                         self.log_signal.emit(msg)
                         print(msg)  # Also print to console
             else:
+                # User specified custom ComfyUI path - check for embedded Python
                 comfy_path = Path(self.config['comfy_path'])
+
+                # Try to find embedded Python at the specified path
+                install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path
+
+                possible_python_paths = [
+                    install_root / "python_embeded" / "python.exe",
+                    install_root / "python_embedded" / "python.exe",
+                    comfy_path / ".." / "python_embeded" / "python.exe",
+                    comfy_path / ".." / "python_embedded" / "python.exe",
+                ]
+
                 python_executable = None
+                for py_path in possible_python_paths:
+                    resolved_path = py_path.resolve()
+                    if resolved_path.exists():
+                        python_executable = resolved_path
+                        msg = f"✓ Found embedded Python: {python_executable}"
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        break
+
+                if not python_executable:
+                    msg = f"⚠ No embedded Python found at {comfy_path}"
+                    self.log_signal.emit(msg)
+                    print(msg)
+                    msg = f"  Will use system Python for pip installations"
+                    self.log_signal.emit(msg)
+                    print(msg)
+                    python_executable = None  # Will fall back to sys.executable
 
             # Process manifest
             manifest_path = Path(self.config['manifest_path'])
