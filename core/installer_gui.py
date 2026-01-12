@@ -34,6 +34,7 @@ class InstallerThread(QThread):
 
     def run(self):
         """Run the installation in a separate thread."""
+        temp_dir = None  # Track temp directory for cleanup
         try:
             # Import here to avoid circular imports
             from core.comfyui_installer import ComfyUIInstaller
@@ -216,6 +217,16 @@ class InstallerThread(QThread):
         except Exception as e:
             self.log_signal.emit(f"\n✗ Error: {str(e)}")
             self.finished_signal.emit(False, str(e))
+        finally:
+            # Cleanup temporary files (always cleanup in GUI mode)
+            if temp_dir and temp_dir.exists():
+                self.log_signal.emit("\nCleaning up temporary files...")
+                import shutil
+                try:
+                    shutil.rmtree(temp_dir)
+                    self.log_signal.emit("✓ Cleanup complete")
+                except Exception as e:
+                    self.log_signal.emit(f"⚠ Cleanup warning: {str(e)}")
 
 
 def run_installer_gui() -> dict:

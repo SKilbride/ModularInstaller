@@ -106,6 +106,8 @@ def main():
                         help="List manifest contents without installing")
     parser.add_argument("--cleanup", action="store_true",
                         help="Clean up partial download files and exit")
+    parser.add_argument("--keep-extracted", action="store_true",
+                        help="Keep extracted temporary files for debugging (don't auto-cleanup)")
 
     args = parser.parse_args()
 
@@ -485,15 +487,19 @@ def main():
         traceback.print_exc()
         return 1
     finally:
-        # Cleanup temporary files
+        # Cleanup temporary files (unless --keep-extracted flag is set)
         if temp_dir and temp_dir.exists():
-            print("\nCleaning up temporary files...")
-            import shutil
-            try:
-                shutil.rmtree(temp_dir)
-                print("✓ Cleanup complete")
-            except Exception as e:
-                print(f"⚠ Cleanup warning: {e}")
+            if args.keep_extracted:
+                print(f"\n⚠ Keeping extracted files for debugging: {temp_dir}")
+                print("  Use --cleanup to remove them later")
+            else:
+                print("\nCleaning up temporary files...")
+                import shutil
+                try:
+                    shutil.rmtree(temp_dir)
+                    print("✓ Cleanup complete")
+                except Exception as e:
+                    print(f"⚠ Cleanup warning: {e}")
 
         if log_file:
             print(f"\nLog file: {log_file}")
