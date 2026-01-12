@@ -685,7 +685,7 @@ class ManifestHandler:
         """
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
-        
+
         self.log(f"  Cloning from {url} (ref: {ref})...")
         try:
             subprocess.run([
@@ -695,15 +695,33 @@ class ManifestHandler:
                 url, str(local_path)
             ], check=True, capture_output=False)
         except subprocess.CalledProcessError as e:
-            self.log(f"✗ Git clone failed: {e}", "ERROR")
-            raise
-        
+            # If branch-specific clone fails, try without --branch to use default branch
+            if ref == 'main' or ref == 'master':
+                self.log(f"  Branch '{ref}' not found, trying default branch...", "WARNING")
+                try:
+                    subprocess.run([
+                        'git', 'clone', '--depth', '1',
+                        '--progress',
+                        url, str(local_path)
+                    ], check=True, capture_output=False)
+                    self.log(f"✓ {item['name']} cloned using default branch")
+                except subprocess.CalledProcessError as e2:
+                    self.log(f"✗ Git clone failed: {e2}", "ERROR")
+                    self.log(f"  Possible reasons:", "ERROR")
+                    self.log(f"    - Repository doesn't exist or was renamed", "ERROR")
+                    self.log(f"    - Network connectivity issue", "ERROR")
+                    self.log(f"    - Repository is private (requires authentication)", "ERROR")
+                    raise
+            else:
+                self.log(f"✗ Git clone failed: {e}", "ERROR")
+                raise
+
         self.log(f"✓ {item['name']} cloned")
         self.downloaded_items.append(item)
-        
+
         # Install requirements if specified
         self._install_requirements_if_needed(item, local_path)
-        
+
         return True
     
     def _remove_directory_safely(self, path: Path):
