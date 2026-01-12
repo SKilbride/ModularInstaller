@@ -175,7 +175,8 @@ class InstallerThread(QThread):
                 comfy_path=comfy_path,
                 python_executable=python_executable,
                 max_workers=self.config.get('workers', 4),
-                install_temp_path=install_temp_path
+                install_temp_path=install_temp_path,
+                log_callback=self.log_signal.emit  # Pass GUI log callback
             )
 
             handler.load_manifest()

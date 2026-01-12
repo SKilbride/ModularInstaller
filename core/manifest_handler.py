@@ -25,7 +25,7 @@ class ManifestHandler:
 
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
                  max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None,
-                 install_temp_path: Optional[Path] = None, hf_token: Optional[str] = None):
+                 install_temp_path: Optional[Path] = None, hf_token: Optional[str] = None, log_callback=None):
         """
         Initialize ManifestHandler.
 
@@ -38,10 +38,12 @@ class ManifestHandler:
             python_executable: Optional path to Python executable for pip installs (default: sys.executable)
             install_temp_path: Optional path to InstallTemp folder from ZIP package
             hf_token: Optional HuggingFace token for gated models (overrides HF_TOKEN env var)
+            log_callback: Optional callback function for log messages (for GUI integration)
         """
         self.manifest_path = Path(manifest_path)
         self.comfy_path = Path(comfy_path)
         self.log_file = log_file
+        self.log_callback = log_callback
         self.manifest = None
         # Use provided token, or fall back to environment variable
         self.hf_token = hf_token or os.getenv('HF_TOKEN')
@@ -70,6 +72,10 @@ class ManifestHandler:
         if self.log_file:
             with open(self.log_file, 'a', encoding='utf-8') as f:
                 f.write(formatted_message + '\n')
+
+        # Call GUI callback if provided
+        if self.log_callback:
+            self.log_callback(message)
 
     def has_gated_models(self) -> bool:
         """
