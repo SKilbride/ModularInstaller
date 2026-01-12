@@ -413,7 +413,11 @@ class ManifestHandler:
         elif item['source'] == 'pip':
             self._install_pip_package(item)
         elif item['source'] == 'install_temp':
-            self._copy_from_install_temp(item)
+            # Route pip_package types to pip installer, others to copy
+            if item.get('type') == 'pip_package':
+                self._install_pip_package(item)
+            else:
+                self._copy_from_install_temp(item)
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
     
@@ -898,17 +902,29 @@ class ManifestHandler:
         Install a Python package via pip.
 
         Supports:
-        - PyPI packages: package="numpy", version="1.24.0"
-        - Local wheel files: package="path/to/package.whl"
-        - URLs: package="https://example.com/package.whl"
-        - install_temp wheels: package="my_package.whl", source_path="wheels/my_package.whl"
+        - PyPI packages: source="pip", package="numpy", version="1.24.0"
+        - Local wheel files: source="pip", package="path/to/package.whl"
+        - URLs: source="pip", package="https://example.com/package.whl"
+        - InstallTemp wheels: source="install_temp", source_path="wheels/my_package.whl"
         """
         package_spec = item.get('package', item['name'])
         version = item.get('version')
-        source_path = item.get('source_path')  # For install_temp wheels
+        source_path = item.get('source_path')
 
         # Handle install_temp source for bundled wheel files
-        if source_path and self.install_temp_path:
+        if item.get('source') == 'install_temp':
+            if not source_path:
+                self.log(f"✗ source_path required for install_temp pip packages", "ERROR")
+                if item.get('required', False):
+                    raise ValueError(f"source_path required for install_temp source: {item['name']}")
+                return
+
+            if not self.install_temp_path:
+                self.log(f"✗ InstallTemp folder not available", "ERROR")
+                if item.get('required', False):
+                    raise FileNotFoundError(f"InstallTemp folder not available for: {item['name']}")
+                return
+
             wheel_path = self.install_temp_path / source_path
             if wheel_path.exists():
                 package_spec = str(wheel_path.resolve())
