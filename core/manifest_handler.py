@@ -258,10 +258,16 @@ class ManifestHandler:
             
             if path.exists():
                 status['exists'] = True
-                
+
+                # Install_temp sources should always be copied (they're bundled and authoritative)
+                if item['source'] == 'install_temp':
+                    status['valid'] = False
+                    status['needs_download'] = True
+                    status['reason'] = 'install_temp_always_copy'
+                    self.log(f"⊘ {item['name']} will be copied from package")
                 # Verify checksum if provided (support both 'sha256' and 'sha')
-                checksum = item.get('sha256') or item.get('sha')
-                if checksum:
+                elif item.get('sha256') or item.get('sha'):
+                    checksum = item.get('sha256') or item.get('sha')
                     if self._verify_checksum(path, checksum):
                         status['valid'] = True
                         status['needs_download'] = False
@@ -283,8 +289,13 @@ class ManifestHandler:
                 status['valid'] = False
                 status['needs_download'] = True
                 status['reason'] = 'missing'
-                resume_msg = f" (partial: {status['partial_size'] / 1024 / 1024:.1f}MB)" if status['partial_exists'] else ""
-                self.log(f"⊘ {item['name']} not found - will download{resume_msg}")
+
+                # Use different message for install_temp sources
+                if item['source'] == 'install_temp':
+                    self.log(f"⊘ {item['name']} will be copied from package")
+                else:
+                    resume_msg = f" (partial: {status['partial_size'] / 1024 / 1024:.1f}MB)" if status['partial_exists'] else ""
+                    self.log(f"⊘ {item['name']} not found - will download{resume_msg}")
             
             existing[item['name']] = status
         
