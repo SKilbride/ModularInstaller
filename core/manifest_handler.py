@@ -757,6 +757,53 @@ class ManifestHandler:
                 except Exception as e3:
                     raise Exception(f"Cannot remove existing directory {path}: {e3}")
     
+    def _run_pip_install_with_retry(self, pip_args: list, max_retries: int = 3, retry_delay: float = 2.0) -> subprocess.CompletedProcess:
+        """
+        Run pip install with retry logic for Windows file lock errors.
+
+        Args:
+            pip_args: List of pip arguments (e.g., ['install', '-r', 'requirements.txt'])
+            max_retries: Maximum number of retry attempts
+            retry_delay: Delay between retries in seconds
+
+        Returns:
+            CompletedProcess instance
+
+        Raises:
+            subprocess.CalledProcessError: If all retries fail
+        """
+        base_cmd = [str(self.python_executable), '-m', 'pip'] + pip_args
+
+        # Add flags to help with Windows embedded Python issues
+        if '--no-warn-script-location' not in pip_args:
+            base_cmd.append('--no-warn-script-location')
+
+        last_error = None
+        for attempt in range(max_retries):
+            try:
+                result = subprocess.run(base_cmd, check=True, capture_output=True, text=True)
+                return result
+            except subprocess.CalledProcessError as e:
+                last_error = e
+                error_msg = e.stderr if e.stderr else str(e)
+
+                # Check if it's a Windows file lock error (WinError 32)
+                if 'WinError 32' in error_msg or 'being used by another process' in error_msg:
+                    if attempt < max_retries - 1:
+                        self.log(f"  ⚠ File locked by another process, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})...", "WARNING")
+                        time.sleep(retry_delay)
+                        retry_delay *= 1.5  # Exponential backoff
+                        continue
+                    else:
+                        self.log(f"  ✗ Failed after {max_retries} attempts due to file locks", "ERROR")
+                        self.log(f"  Suggestion: Close any Python processes or restart your computer", "WARNING")
+                else:
+                    # Non-file-lock error, don't retry
+                    break
+
+        # All retries exhausted
+        raise last_error
+
     def _install_requirements_if_needed(self, item: Dict, local_path: Path):
         """
         Install requirements.txt if specified in manifest item.
@@ -767,12 +814,11 @@ class ManifestHandler:
                 self.log(f"  Installing requirements for {item['name']}...")
                 self.log(f"  Using Python: {self.python_executable}")
                 try:
-                    subprocess.run([
-                        str(self.python_executable), '-m', 'pip', 'install', '-r', str(req_file)
-                    ], check=True, capture_output=False)
+                    self._run_pip_install_with_retry(['install', '-r', str(req_file)])
                     self.log(f"  ✓ Requirements installed")
                 except subprocess.CalledProcessError as e:
-                    self.log(f"  ⚠ Requirements installation failed: {e}", "WARNING")
+                    error_msg = e.stderr if e.stderr else str(e)
+                    self.log(f"  ⚠ Requirements installation failed: {error_msg}", "WARNING")
                     if item.get('required', False):
                         raise
             else:
@@ -1059,9 +1105,7 @@ class ManifestHandler:
         self.log(f"  Using Python: {self.python_executable}")
 
         try:
-            subprocess.run([
-                str(self.python_executable), '-m', 'pip', 'install', package_spec
-            ], check=True, capture_output=True, text=True)
+            self._run_pip_install_with_retry(['install', package_spec])
             self.log(f"✓ {item['name']} installed via pip")
             self.downloaded_items.append(item)
         except subprocess.CalledProcessError as e:
