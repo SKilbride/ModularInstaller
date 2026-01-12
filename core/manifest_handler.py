@@ -894,14 +894,61 @@ class ManifestHandler:
         self.log(f"✓ {item['name']} copied from InstallTemp")
 
     def _install_pip_package(self, item: Dict):
-        """Install a Python package via pip."""
+        """
+        Install a Python package via pip.
+
+        Supports:
+        - PyPI packages: package="numpy", version="1.24.0"
+        - Local wheel files: package="path/to/package.whl"
+        - URLs: package="https://example.com/package.whl"
+        - install_temp wheels: package="my_package.whl", source_path="wheels/my_package.whl"
+        """
         package_spec = item.get('package', item['name'])
         version = item.get('version')
+        source_path = item.get('source_path')  # For install_temp wheels
 
-        if version:
-            package_spec = f"{package_spec}=={version}"
+        # Handle install_temp source for bundled wheel files
+        if source_path and self.install_temp_path:
+            wheel_path = self.install_temp_path / source_path
+            if wheel_path.exists():
+                package_spec = str(wheel_path.resolve())
+                self.log(f"↓ Installing Python package from InstallTemp: {wheel_path.name}...")
+            else:
+                self.log(f"✗ Wheel file not found in InstallTemp: {source_path}", "ERROR")
+                if item.get('required', False):
+                    raise FileNotFoundError(f"Wheel file not found: {source_path}")
+                return
+        # Check if package_spec is a local file path
+        elif package_spec.endswith('.whl') or package_spec.endswith('.tar.gz') or '/' in package_spec or '\\' in package_spec:
+            # Could be a local path or URL
+            if not package_spec.startswith(('http://', 'https://', 'git+')):
+                # Local path - resolve it
+                local_path = Path(package_spec)
 
-        self.log(f"↓ Installing Python package: {package_spec}...")
+                # Try absolute path first
+                if local_path.is_absolute() and local_path.exists():
+                    package_spec = str(local_path.resolve())
+                else:
+                    # Try relative to manifest location
+                    manifest_dir = self.manifest_path.parent
+                    relative_path = manifest_dir / package_spec
+                    if relative_path.exists():
+                        package_spec = str(relative_path.resolve())
+                    elif not local_path.exists():
+                        self.log(f"✗ Local package file not found: {package_spec}", "ERROR")
+                        if item.get('required', False):
+                            raise FileNotFoundError(f"Package file not found: {package_spec}")
+                        return
+                    else:
+                        package_spec = str(local_path.resolve())
+
+                self.log(f"↓ Installing Python package from local file: {Path(package_spec).name}...")
+        else:
+            # PyPI package - add version if specified
+            if version:
+                package_spec = f"{package_spec}=={version}"
+            self.log(f"↓ Installing Python package from PyPI: {package_spec}...")
+
         self.log(f"  Using Python: {self.python_executable}")
 
         try:
