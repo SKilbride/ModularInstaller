@@ -13,10 +13,15 @@ from core.package_manager import PackageManager
 from core.comfyui_installer import ComfyUIInstaller
 
 
-def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> tuple[Path, Optional[Path]]:
+def extract_manifest_from_zip(zip_path: Path, temp_dir: Path, comfy_path: Optional[Path] = None) -> tuple[Path, Optional[Path]]:
     """
     Extract manifest.json from ZIP package.
-    Also extracts InstallTemp folder if present.
+    Also extracts InstallTemp folder if present and merges ComfyUI folder if present.
+
+    Args:
+        zip_path: Path to the ZIP package
+        temp_dir: Temporary directory for extraction
+        comfy_path: ComfyUI installation path (for merging ComfyUI folder from package)
 
     Returns:
         tuple: (manifest_path, install_temp_path)
@@ -60,6 +65,29 @@ def extract_manifest_from_zip(zip_path: Path, temp_dir: Path) -> tuple[Path, Opt
                 zf.extract(file, temp_dir)
 
             print(f"✓ InstallTemp extracted to: {install_temp_path}")
+
+        # Check for ComfyUI folder and merge it into installation
+        comfyui_files = [f for f in zf.namelist() if f.startswith('ComfyUI/') and not f.startswith('ComfyUI/.')]
+        if comfyui_files and comfy_path:
+            print(f"Found ComfyUI folder in package - merging {len(comfyui_files)} files...")
+
+            for file in comfyui_files:
+                # Extract to temp first
+                zf.extract(file, temp_dir)
+
+                # Determine source and destination
+                source_file = temp_dir / file
+                # Remove 'ComfyUI/' prefix to get relative path
+                relative_path = Path(file).relative_to('ComfyUI')
+                dest_file = comfy_path / relative_path
+
+                # Skip directories (they're created automatically)
+                if source_file.is_file():
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(source_file, dest_file)
+
+            print(f"✓ ComfyUI folder merged into {comfy_path}")
 
         return manifest_path, install_temp_path
 
@@ -338,7 +366,7 @@ def main():
         if manifest_path.suffix.lower() == '.zip':
             # Extract manifest from ZIP package
             temp_dir = Path(args.temp_path) / f"manifest_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}" if args.temp_path else comfy_path / f"temp_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-            manifest_path, install_temp_path = extract_manifest_from_zip(manifest_path, temp_dir)
+            manifest_path, install_temp_path = extract_manifest_from_zip(manifest_path, temp_dir, comfy_path)
 
             # Also use PackageManager to extract bundled files if present
             print("\n[2/3] Extracting bundled files from package...")

@@ -168,6 +168,29 @@ class InstallerThread(QThread):
 
                         self.log_signal.emit(f"✓ InstallTemp extracted")
 
+                    # Check for ComfyUI folder and merge it into installation
+                    comfyui_files = [f for f in zf.namelist() if f.startswith('ComfyUI/') and not f.startswith('ComfyUI/.')]
+                    if comfyui_files:
+                        self.log_signal.emit(f"Found ComfyUI folder in package - merging {len(comfyui_files)} files...")
+
+                        for file in comfyui_files:
+                            # Extract to temp first
+                            zf.extract(file, temp_dir)
+
+                            # Determine source and destination
+                            source_file = temp_dir / file
+                            # Remove 'ComfyUI/' prefix to get relative path
+                            relative_path = Path(file).relative_to('ComfyUI')
+                            dest_file = comfy_path / relative_path
+
+                            # Skip directories (they're created automatically)
+                            if source_file.is_file():
+                                dest_file.parent.mkdir(parents=True, exist_ok=True)
+                                import shutil
+                                shutil.copy2(source_file, dest_file)
+
+                        self.log_signal.emit(f"✓ ComfyUI folder merged into {comfy_path}")
+
             self.log_signal.emit(f"Loading manifest: {manifest_path.name}")
 
             handler = ManifestHandler(
