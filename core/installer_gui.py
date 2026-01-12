@@ -218,15 +218,18 @@ class InstallerThread(QThread):
             self.log_signal.emit(f"\n✗ Error: {str(e)}")
             self.finished_signal.emit(False, str(e))
         finally:
-            # Cleanup temporary files (always cleanup in GUI mode)
+            # Cleanup temporary files (unless --keep-extracted flag is set)
             if temp_dir and temp_dir.exists():
-                self.log_signal.emit("\nCleaning up temporary files...")
-                import shutil
-                try:
-                    shutil.rmtree(temp_dir)
-                    self.log_signal.emit("✓ Cleanup complete")
-                except Exception as e:
-                    self.log_signal.emit(f"⚠ Cleanup warning: {str(e)}")
+                if self.config.get('keep_extracted', False):
+                    self.log_signal.emit(f"\n⚠ Keeping extracted files for debugging: {temp_dir}")
+                else:
+                    self.log_signal.emit("\nCleaning up temporary files...")
+                    import shutil
+                    try:
+                        shutil.rmtree(temp_dir)
+                        self.log_signal.emit("✓ Cleanup complete")
+                    except Exception as e:
+                        self.log_signal.emit(f"⚠ Cleanup warning: {str(e)}")
 
 
 def run_installer_gui() -> dict:
@@ -440,6 +443,7 @@ class InstallerWindow(QWidget):
             'force': self.force_checkbox.isChecked(),
             'required_only': self.required_only_checkbox.isChecked(),
             'install_blender': self.install_blender_checkbox.isChecked(),
+            'keep_extracted': '--keep-extracted' in sys.argv,  # Check for CLI flag
         }
 
         comfy_path = self.comfy_path_edit.text().strip()

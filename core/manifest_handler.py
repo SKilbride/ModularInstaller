@@ -857,6 +857,47 @@ class ManifestHandler:
 
         self.log(f"✓ {item['name']} copied")
 
+    def _resolve_case_insensitive_path(self, base_path: Path, relative_path: str) -> Optional[Path]:
+        """
+        Resolve a path case-insensitively by walking the directory tree.
+
+        This is needed because ZIP archives preserve exact case, but manifests
+        might use different case (e.g., 'Wheels/' vs 'wheels/').
+
+        Args:
+            base_path: The base directory to search from
+            relative_path: The relative path to resolve (e.g., "Wheels/file.whl")
+
+        Returns:
+            Resolved Path object if found, None otherwise
+        """
+        if not base_path.exists():
+            return None
+
+        # Split the path into components
+        parts = Path(relative_path).parts
+        current = base_path
+
+        # Walk through each component and try to match case-insensitively
+        for part in parts:
+            part_lower = part.lower()
+            found = False
+
+            try:
+                # List directory contents and match case-insensitively
+                for item in current.iterdir():
+                    if item.name.lower() == part_lower:
+                        current = item
+                        found = True
+                        break
+            except (PermissionError, OSError):
+                return None
+
+            if not found:
+                return None
+
+        return current
+
     def _copy_from_install_temp(self, item: Dict):
         """Copy from InstallTemp folder (bundled in ZIP package)."""
         if not self.install_temp_path or not self.install_temp_path.exists():
@@ -870,7 +911,13 @@ class ManifestHandler:
         dest = self.resolve_item_path(item)
 
         if not source.exists():
-            raise FileNotFoundError(f"Source path not found in InstallTemp: {source}")
+            # Try case-insensitive resolution (for ZIP case sensitivity issues)
+            resolved_source = self._resolve_case_insensitive_path(self.install_temp_path, source_relative)
+            if resolved_source and resolved_source.exists():
+                source = resolved_source
+                self.log(f"  (Resolved case-insensitive path: {source_relative} -> {source.relative_to(self.install_temp_path)})", "WARNING")
+            else:
+                raise FileNotFoundError(f"Source path not found in InstallTemp: {source}")
 
         dest.parent.mkdir(parents=True, exist_ok=True)
 
@@ -930,10 +977,17 @@ class ManifestHandler:
                 package_spec = str(wheel_path.resolve())
                 self.log(f"↓ Installing Python package from InstallTemp: {wheel_path.name}...")
             else:
-                self.log(f"✗ Wheel file not found in InstallTemp: {source_path}", "ERROR")
-                if item.get('required', False):
-                    raise FileNotFoundError(f"Wheel file not found: {source_path}")
-                return
+                # Try case-insensitive resolution (for ZIP case sensitivity issues)
+                resolved_path = self._resolve_case_insensitive_path(self.install_temp_path, source_path)
+                if resolved_path and resolved_path.exists():
+                    package_spec = str(resolved_path.resolve())
+                    self.log(f"↓ Installing Python package from InstallTemp: {resolved_path.name}...")
+                    self.log(f"  (Resolved case-insensitive path: {source_path} -> {resolved_path.relative_to(self.install_temp_path)})", "WARNING")
+                else:
+                    self.log(f"✗ Wheel file not found in InstallTemp: {source_path}", "ERROR")
+                    if item.get('required', False):
+                        raise FileNotFoundError(f"Wheel file not found: {source_path}")
+                    return
         # Check if package_spec is a local file path
         elif package_spec.endswith('.whl') or package_spec.endswith('.tar.gz') or '/' in package_spec or '\\' in package_spec:
             # Could be a local path or URL
