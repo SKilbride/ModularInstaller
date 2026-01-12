@@ -757,6 +757,8 @@ class ManifestHandler:
                     self.log(f"  ⚠ Requirements installation failed: {e}", "WARNING")
                     if item.get('required', False):
                         raise
+            else:
+                self.log(f"  ⊘ No requirements.txt found for {item['name']}")
     
     def _download_from_url(self, item: Dict, verify_checksum: bool = True):
         """Download from direct URL with progress bar and resume capability."""
