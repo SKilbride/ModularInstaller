@@ -577,7 +577,7 @@ class ComfyUIInstaller:
         try:
             # Install with winget (silent mode)
             result = subprocess.run(
-                ['winget', 'install', '--id', self.BLENDER_WINGET_ID, '--silent', '--accept-package-agreements', '--accept-source-agreements'],
+                ['winget', 'install', '--id', self.BLENDER_WINGET_ID, '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements'],
                 capture_output=True,
                 text=True,
                 timeout=600  # 10 minute timeout for download/install
