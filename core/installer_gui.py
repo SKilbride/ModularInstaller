@@ -375,7 +375,7 @@ class InstallerWindow(QWidget):
         self.setLayout(main_layout)
 
         # Title
-        title = QLabel("ComfyUI Modular Installer")
+        title = QLabel(package_title)
         title_font = QFont()
         title_font.setPointSize(16)
         title_font.setBold(True)
