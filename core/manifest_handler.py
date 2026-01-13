@@ -56,10 +56,14 @@ class ManifestHandler:
         # Track what was actually downloaded vs skipped
         self.downloaded_items = []
         self.skipped_items = []
-        
+
+        # Git executable path (cached after first check)
+        self._git_executable = None
+        self._git_checked = False
+
         # Cache for file status to verify checksums only once
         self._file_status_cache = None
-        
+
         # Create partial download directory if resume is enabled
         if self.resume_downloads:
             self.partial_download_dir.mkdir(parents=True, exist_ok=True)
@@ -100,6 +104,154 @@ class ManifestHandler:
             token: HuggingFace access token
         """
         self.hf_token = token.strip() if token else None
+
+    def _ensure_git_available(self) -> str:
+        """
+        Ensure git is available, installing it if necessary.
+
+        Returns:
+            Path to git executable as string
+
+        Raises:
+            RuntimeError: If git cannot be found or installed
+        """
+        if self._git_checked and self._git_executable:
+            return self._git_executable
+
+        # Try to find git in PATH first
+        try:
+            result = subprocess.run(['git', '--version'], capture_output=True, text=True, timeout=5)
+            if result.returncode == 0:
+                self._git_executable = 'git'
+                self._git_checked = True
+                return self._git_executable
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        # Try common installation locations on Windows
+        if sys.platform == 'win32':
+            common_paths = [
+                r"C:\Program Files\Git\bin\git.exe",
+                r"C:\Program Files (x86)\Git\bin\git.exe",
+                Path.home() / "AppData" / "Local" / "Programs" / "Git" / "bin" / "git.exe",
+            ]
+
+            for git_path in common_paths:
+                if Path(git_path).exists():
+                    try:
+                        result = subprocess.run([str(git_path), '--version'], capture_output=True, text=True, timeout=5)
+                        if result.returncode == 0:
+                            self._git_executable = str(git_path)
+                            self._git_checked = True
+                            # Add to current process PATH
+                            git_bin_dir = str(Path(git_path).parent)
+                            if git_bin_dir not in os.environ['PATH']:
+                                os.environ['PATH'] = git_bin_dir + os.pathsep + os.environ['PATH']
+                            self.log(f"✓ Found git at: {git_path}")
+                            return self._git_executable
+                    except (subprocess.TimeoutExpired, Exception):
+                        continue
+
+        # Git not found - try to install it via winget on Windows
+        if sys.platform == 'win32':
+            self.log("✗ Git not found - attempting to install via winget...")
+            try:
+                # Install Git via winget
+                result = subprocess.run(
+                    ['winget', 'install', '--id', 'Git.Git', '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements'],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+
+                if result.returncode == 0 or 'already installed' in result.stdout.lower():
+                    self.log("✓ Git installed successfully")
+
+                    # Try to find git again after installation
+                    time.sleep(2)  # Give it a moment to finalize
+
+                    for git_path in common_paths:
+                        if Path(git_path).exists():
+                            try:
+                                result = subprocess.run([str(git_path), '--version'], capture_output=True, text=True, timeout=5)
+                                if result.returncode == 0:
+                                    self._git_executable = str(git_path)
+                                    self._git_checked = True
+                                    # Add to current process PATH
+                                    git_bin_dir = str(Path(git_path).parent)
+                                    if git_bin_dir not in os.environ['PATH']:
+                                        os.environ['PATH'] = git_bin_dir + os.pathsep + os.environ['PATH']
+                                    self.log(f"✓ Git ready at: {git_path}")
+
+                                    # Also install Git LFS if needed
+                                    self._ensure_git_lfs_available()
+
+                                    return self._git_executable
+                            except Exception:
+                                continue
+
+                    # If still not found, it might need a PATH refresh
+                    raise RuntimeError(
+                        "Git was installed but not found. Please restart the installer or add Git to your PATH manually."
+                    )
+                else:
+                    error_msg = result.stderr if result.stderr else result.stdout
+                    raise RuntimeError(f"Failed to install Git via winget: {error_msg}")
+
+            except FileNotFoundError:
+                raise RuntimeError(
+                    "Git not found and winget is not available. Please install Git manually from https://git-scm.com/downloads"
+                )
+            except Exception as e:
+                raise RuntimeError(f"Failed to install Git: {e}")
+
+        # Non-Windows platforms
+        self._git_checked = True
+        raise RuntimeError(
+            "Git not found. Please install Git:\n"
+            "  - Windows: https://git-scm.com/downloads\n"
+            "  - Linux: sudo apt install git (Ubuntu/Debian) or sudo yum install git (RedHat/CentOS)\n"
+            "  - Mac: brew install git"
+        )
+
+    def _ensure_git_lfs_available(self):
+        """
+        Ensure Git LFS is available, installing it if necessary.
+        Only called after git is confirmed to be available.
+        """
+        try:
+            # Check if git lfs is already installed
+            result = subprocess.run(
+                [self._git_executable, 'lfs', 'version'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                self.log("✓ Git LFS already installed")
+                return
+        except Exception:
+            pass
+
+        # Try to install Git LFS on Windows via winget
+        if sys.platform == 'win32':
+            self.log("Installing Git LFS...")
+            try:
+                result = subprocess.run(
+                    ['winget', 'install', '--id', 'GitHub.GitLFS', '--source', 'winget', '--silent', '--accept-package-agreements', '--accept-source-agreements'],
+                    capture_output=True,
+                    text=True,
+                    timeout=120
+                )
+
+                if result.returncode == 0 or 'already installed' in result.stdout.lower():
+                    # Initialize git lfs
+                    subprocess.run([self._git_executable, 'lfs', 'install'], capture_output=True, timeout=10)
+                    self.log("✓ Git LFS installed and initialized")
+                else:
+                    self.log("⚠ Git LFS installation failed - large files may not download correctly", "WARNING")
+            except Exception as e:
+                self.log(f"⚠ Could not install Git LFS: {e}", "WARNING")
 
     def resolve_path_base(self, path_base: str) -> Path:
         """
@@ -687,6 +839,9 @@ class ManifestHandler:
         """
         Perform a fresh git clone.
         """
+        # Ensure git is available
+        git_cmd = self._ensure_git_available()
+
         # Ensure parent directory exists
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -695,7 +850,7 @@ class ManifestHandler:
 
         try:
             result = subprocess.run([
-                'git', 'clone', '--depth', '1',
+                git_cmd, 'clone', '--depth', '1',
                 '--branch', ref,
                 '--progress',
                 url, str(local_path)
@@ -714,7 +869,7 @@ class ManifestHandler:
                 self.log(f"  Branch '{ref}' not found, trying default branch...", "WARNING")
                 try:
                     result = subprocess.run([
-                        'git', 'clone', '--depth', '1',
+                        git_cmd, 'clone', '--depth', '1',
                         '--progress',
                         url, str(local_path)
                     ], check=True, capture_output=True, text=True)
