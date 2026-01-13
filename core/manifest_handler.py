@@ -691,33 +691,53 @@ class ManifestHandler:
         local_path.parent.mkdir(parents=True, exist_ok=True)
 
         self.log(f"  Cloning from {url} (ref: {ref})...")
+        self.log(f"  Target path: {local_path}")
+
         try:
-            subprocess.run([
+            result = subprocess.run([
                 'git', 'clone', '--depth', '1',
                 '--branch', ref,
                 '--progress',
                 url, str(local_path)
-            ], check=True, capture_output=False)
+            ], check=True, capture_output=True, text=True)
+        except FileNotFoundError:
+            self.log(f"✗ Git executable not found", "ERROR")
+            self.log(f"  Please ensure git is installed and in your PATH", "ERROR")
+            self.log(f"  Download from: https://git-scm.com/downloads", "ERROR")
+            raise
         except subprocess.CalledProcessError as e:
+            error_output = e.stderr if e.stderr else e.stdout if e.stdout else str(e)
+            self.log(f"✗ Git clone failed: {error_output}", "ERROR")
+
             # If branch-specific clone fails, try without --branch to use default branch
             if ref == 'main' or ref == 'master':
                 self.log(f"  Branch '{ref}' not found, trying default branch...", "WARNING")
                 try:
-                    subprocess.run([
+                    result = subprocess.run([
                         'git', 'clone', '--depth', '1',
                         '--progress',
                         url, str(local_path)
-                    ], check=True, capture_output=False)
+                    ], check=True, capture_output=True, text=True)
                     self.log(f"✓ {item['name']} cloned using default branch")
+                except FileNotFoundError:
+                    self.log(f"✗ Git executable not found", "ERROR")
+                    self.log(f"  Please ensure git is installed and in your PATH", "ERROR")
+                    raise
                 except subprocess.CalledProcessError as e2:
-                    self.log(f"✗ Git clone failed: {e2}", "ERROR")
+                    error_output2 = e2.stderr if e2.stderr else e2.stdout if e2.stdout else str(e2)
+                    self.log(f"✗ Git clone failed: {error_output2}", "ERROR")
                     self.log(f"  Possible reasons:", "ERROR")
                     self.log(f"    - Repository doesn't exist or was renamed", "ERROR")
                     self.log(f"    - Network connectivity issue", "ERROR")
                     self.log(f"    - Repository is private (requires authentication)", "ERROR")
+                    self.log(f"    - Path too long (enable Windows long paths)", "ERROR")
                     raise
             else:
-                self.log(f"✗ Git clone failed: {e}", "ERROR")
+                self.log(f"  Possible reasons:", "ERROR")
+                self.log(f"    - Branch '{ref}' doesn't exist", "ERROR")
+                self.log(f"    - Repository doesn't exist or was renamed", "ERROR")
+                self.log(f"    - Network connectivity issue", "ERROR")
+                self.log(f"    - Path too long (enable Windows long paths)", "ERROR")
                 raise
 
         self.log(f"✓ {item['name']} cloned")
