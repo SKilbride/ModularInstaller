@@ -20,7 +20,7 @@ class ManifestHandler:
     """Handles manifest-based installation of ComfyUI resources."""
 
     SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip', 'install_temp', 'winget']
-    SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config']
+    SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config', 'application']
     SUPPORTED_PATH_BASES = ['comfyui', 'home', 'temp', 'appdata', 'absolute', 'install_temp']
 
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
@@ -221,13 +221,13 @@ class ManifestHandler:
             if item['source'] == 'bundled':
                 continue
 
-            # Handle pip packages (no file path)
-            if item['source'] == 'pip':
+            # Handle pip packages and winget applications (no file path)
+            if item['source'] in ['pip', 'winget']:
                 existing[item['name']] = {
                     'exists': False,
                     'valid': False,
                     'needs_download': True,
-                    'reason': 'pip_package',
+                    'reason': f"{item['source']}_package",
                     'partial_exists': False,
                     'partial_size': 0
                 }
