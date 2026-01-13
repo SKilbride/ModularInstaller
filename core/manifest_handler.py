@@ -19,7 +19,7 @@ import time
 class ManifestHandler:
     """Handles manifest-based installation of ComfyUI resources."""
 
-    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip', 'install_temp']
+    SUPPORTED_SOURCES = ['bundled', 'huggingface', 'git', 'url', 'local', 'pip', 'install_temp', 'winget']
     SUPPORTED_TYPES = ['model', 'custom_node', 'file', 'directory', 'pip_package', 'config']
     SUPPORTED_PATH_BASES = ['comfyui', 'home', 'temp', 'appdata', 'absolute', 'install_temp']
 
@@ -435,6 +435,8 @@ class ManifestHandler:
                 self._install_pip_package(item)
             else:
                 self._copy_from_install_temp(item)
+        elif item['source'] == 'winget':
+            self._download_from_winget(item)
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
     
@@ -452,6 +454,8 @@ class ManifestHandler:
             return f"PyPI: {item.get('package', item['name'])}"
         elif item['source'] == 'install_temp':
             return f"InstallTemp: {item.get('source_path', 'unknown')}"
+        elif item['source'] == 'winget':
+            return f"Winget: {item.get('package_id', 'unknown')}"
         return item['source']
     
     def _get_partial_path(self, target_path: str) -> Path:
@@ -1115,6 +1119,85 @@ class ManifestHandler:
                 raise
             else:
                 self.log(f"⚠ Optional package {item['name']} failed to install", "WARNING")
+
+    def _download_from_winget(self, item: Dict):
+        """
+        Install a package via Windows Package Manager (winget).
+
+        Manifest fields:
+        - package_id (required): The winget package ID (e.g., "Microsoft.VisualStudioCode")
+        - silent (optional): Install silently, default True
+        - accept_agreements (optional): Accept package/source agreements, default True
+        - winget_source (optional): Specify winget source (e.g., "winget", "msstore"), default "winget"
+
+        Example:
+          - name: "Visual Studio Code"
+            source: winget
+            package_id: "Microsoft.VisualStudioCode"
+            required: false
+        """
+        if sys.platform != 'win32':
+            self.log(f"⚠ Winget installation skipped: {item['name']} (Windows-only)", "WARNING")
+            if item.get('required', False):
+                raise OSError(f"Winget source is only supported on Windows: {item['name']}")
+            return
+
+        package_id = item.get('package_id')
+        if not package_id:
+            self.log(f"✗ package_id required for winget source: {item['name']}", "ERROR")
+            if item.get('required', False):
+                raise ValueError(f"package_id required for winget source: {item['name']}")
+            return
+
+        self.log(f"↓ Installing {item['name']} via winget...")
+        self.log(f"  Package ID: {package_id}")
+
+        # Build winget command
+        cmd = ['winget', 'install', '--id', package_id]
+
+        # Add source if specified
+        winget_source = item.get('winget_source', 'winget')
+        cmd.extend(['--source', winget_source])
+
+        # Add silent flag if requested (default True)
+        if item.get('silent', True):
+            cmd.append('--silent')
+
+        # Accept agreements if requested (default True)
+        if item.get('accept_agreements', True):
+            cmd.extend(['--accept-package-agreements', '--accept-source-agreements'])
+
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+
+            if result.returncode == 0:
+                self.log(f"✓ {item['name']} installed via winget")
+                self.downloaded_items.append(item)
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                self.log(f"✗ Winget install failed: {error_msg}", "ERROR")
+                if item.get('required', False):
+                    raise subprocess.CalledProcessError(result.returncode, cmd, error_msg)
+                else:
+                    self.log(f"⚠ Optional package {item['name']} failed to install", "WARNING")
+
+        except subprocess.TimeoutExpired:
+            self.log(f"✗ Winget installation timed out: {item['name']}", "ERROR")
+            if item.get('required', False):
+                raise
+        except FileNotFoundError:
+            self.log(f"✗ winget not found. Please install App Installer from Microsoft Store", "ERROR")
+            if item.get('required', False):
+                raise
+        except Exception as e:
+            self.log(f"✗ Winget installation failed: {e}", "ERROR")
+            if item.get('required', False):
+                raise
 
     def _verify_checksum(self, file_path: Path, expected_sha256: str) -> bool:
         """Verify file SHA256 checksum with progress bar for large files."""
