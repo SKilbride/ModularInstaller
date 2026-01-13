@@ -205,6 +205,9 @@ class InstallerThread(QThread):
             handler.load_manifest()
             handler.validate_manifest()
 
+            # Ensure prerequisites (git, git-lfs) are available
+            handler.ensure_prerequisites()
+
             # Check for gated models and prompt for HF token if needed
             if handler.has_gated_models() and not handler.hf_token:
                 self.log_signal.emit("\n⚠ Gated models detected - HuggingFace token required")

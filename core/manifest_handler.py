@@ -359,7 +359,27 @@ class ManifestHandler:
 
         self.log("Manifest validation passed")
         return True
-    
+
+    def ensure_prerequisites(self):
+        """
+        Ensure required tools (git, git-lfs) are available before starting downloads.
+        Only checks/installs if manifest contains items requiring those tools.
+        """
+        if not self.manifest:
+            return
+
+        # Check if manifest contains any git sources
+        has_git_sources = any(item.get('source') == 'git' for item in self.manifest.get('items', []))
+
+        if has_git_sources:
+            self.log("Checking git availability...")
+            try:
+                self._ensure_git_available()
+                self.log("✓ Git is ready")
+            except RuntimeError as e:
+                self.log(f"✗ Git setup failed: {e}", "ERROR")
+                raise
+
     def check_existing_files(self, force_recheck: bool = False) -> Dict[str, Dict]:
         """
         Check which files already exist and their status.
