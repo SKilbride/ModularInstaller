@@ -290,14 +290,57 @@ class InstallerWindow(QWidget):
         self.installer_thread = None
         self.init_ui()
 
+    def _get_package_name_from_zip(self, zip_path: Path) -> str:
+        """
+        Extract package name from manifest inside ZIP file.
+
+        Args:
+            zip_path: Path to the ZIP package
+
+        Returns:
+            Package name from manifest, or default title if not found
+        """
+        try:
+            with zipfile.ZipFile(zip_path, 'r') as zf:
+                # Look for manifest file
+                manifest_locations = ['manifest.json', 'manifest.yaml', 'manifest.yml']
+                manifest_file = None
+
+                for loc in manifest_locations:
+                    if loc in zf.namelist():
+                        manifest_file = loc
+                        break
+
+                if not manifest_file:
+                    return "ComfyUI Modular Installer"
+
+                # Read manifest content
+                manifest_content = zf.read(manifest_file).decode('utf-8')
+
+                # Parse based on file type
+                if manifest_file.endswith('.json'):
+                    import json
+                    manifest = json.loads(manifest_content)
+                else:  # YAML
+                    import yaml
+                    manifest = yaml.safe_load(manifest_content)
+
+                # Extract package name
+                package_name = manifest.get('package', {}).get('name')
+                if package_name:
+                    return package_name
+
+        except Exception as e:
+            print(f"Warning: Could not read package name from manifest: {e}")
+
+        return "ComfyUI Modular Installer"
+
     def init_ui(self):
         """Initialize the user interface."""
-        self.setWindowTitle("ComfyUI Modular Installer")
-        self.setMinimumSize(700, 600)
-        self.resize(700, 600)
-
         # Check for bundled package.zip if running as frozen executable
         bundled_package = None
+        package_title = "ComfyUI Modular Installer"  # Default title
+
         if getattr(sys, 'frozen', False):
             # Check two locations:
             # 1. Inside the executable (PyInstaller --add-data)
@@ -317,6 +360,14 @@ class InstallerWindow(QWidget):
                 if external_package.exists():
                     bundled_package = external_package
                     print(f"Found package.zip alongside executable: {bundled_package}")
+
+            # If we found a bundled package, extract package name from manifest
+            if bundled_package:
+                package_title = self._get_package_name_from_zip(bundled_package)
+
+        self.setWindowTitle(package_title)
+        self.setMinimumSize(700, 600)
+        self.resize(700, 600)
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
