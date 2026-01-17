@@ -1,725 +1,542 @@
 import argparse
-import subprocess
-import time
-import requests
 import json
-import uuid
 import os
 import sys
-import yaml
-import re
-from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+import zipfile
 from pathlib import Path
-from threading import Thread, Event, Lock
-from queue import Queue
 from datetime import datetime
+from typing import Optional
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from core.workflow_manager import WorkflowManager
+from core.manifest_handler import ManifestHandler
 from core.package_manager import PackageManager
-from core.gui import run_gui
-from core.gui import show_restart_required_dialog
+from core.comfyui_installer import ComfyUIInstaller
 
 
-class YamlObject:
-    def __init__(self, yaml_path):
-        self.yaml_path = yaml_path
-        self.data = None
-        self.load()
-
-    def load(self):
-        if os.path.exists(self.yaml_path):
-            with open(self.yaml_path, 'r', encoding='utf-8') as f:
-                self.data = yaml.safe_load(f) or {}
-        else:
-            self.data = {}
-
-    def exists(self):
-        return os.path.exists(self.yaml_path)
-
-    def get(self, key, default=None):
-        if self.data is None:
-            self.load()
-        keys = key.split('.')
-        value = self.data
-        for k in keys:
-            if isinstance(value, dict):
-                value = value.get(k)
-            else:
-                return default
-            if value is None:
-                return default
-        return value
-
-    def set(self, key, value):
-        if self.data is None:
-            self.load()
-        keys = key.split('.')
-        d = self.data
-        for k in keys[:-1]:
-            if k not in d:
-                d[k] = {}
-            d = d[k]
-            if not isinstance(d, dict):
-                raise ValueError(f"Cannot set nested key '{key}' because intermediate '{k}' is not a dict")
-        d[keys[-1]] = value
-        self.save()
-
-    def save(self):
-        with open(self.yaml_path, 'w', encoding='utf-8') as f:
-            yaml.safe_dump(self.data, f)
-
-    def key_exists(self, key):
-        if self.data is None:
-            self.load()
-        keys = key.split('.')
-        value = self.data
-        for k in keys:
-            if not isinstance(value, dict):
-                return False
-            if k not in value:
-                return False
-            value = value[k]
-        return True
-
-
-class BenchmarkNodeManager:
-    def __init__(self, custom_nodes_path):
-        self.custom_nodes_path = custom_nodes_path
-        self.benchmark_path = os.path.join(custom_nodes_path, 'comfyui-benchmark')
-        self.exists = os.path.exists(self.benchmark_path) and os.path.isdir(self.benchmark_path)
-        self.yaml = None
-        if self.exists:
-            yaml_path = os.path.join(self.benchmark_path, 'config.yaml')
-            self.yaml = YamlObject(yaml_path)
-
-def get_comfy_python(comfy_path: Path) -> str:
+def extract_manifest_from_zip(zip_path: Path, temp_dir: Path, comfy_path: Optional[Path] = None) -> tuple[Path, Optional[Path]]:
     """
-    Return the correct python executable for a ComfyUI installation.
-    Prioritizes: .venv > venv > conda (fallback to current)
+    Extract manifest.json from ZIP package.
+    Also extracts InstallTemp folder if present and merges ComfyUI folder if present.
+
+    Args:
+        zip_path: Path to the ZIP package
+        temp_dir: Temporary directory for extraction
+        comfy_path: ComfyUI installation path (for merging ComfyUI folder from package)
+
+    Returns:
+        tuple: (manifest_path, install_temp_path)
+            - manifest_path: Path to extracted manifest file
+            - install_temp_path: Path to extracted InstallTemp folder, or None if not present
     """
-    comfy_path = Path(comfy_path)
+    print(f"[1/3] Extracting manifest from package...")
 
-    # 1. Standard venv (.venv or venv)
-    candidates = [
-        comfy_path / ".venv" / "Scripts" / "python.exe",
-        comfy_path / ".venv" / "bin" / "python",
-        comfy_path / "venv" / "Scripts" / "python.exe",
-        comfy_path / "venv" / "bin" / "python",
-    ]
-    for cand in candidates:
-        if cand.exists():
-            print(f"[INFO] Using ComfyUI's virtual environment: {cand}")
-            return str(cand)
+    # Create temporary extraction directory
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
-    # 2. Fallback: hope we're already in the right env
-    print(f"[WARNING] No .venv found in {comfy_path} — using current Python ({sys.executable})")
-    return sys.executable
+    install_temp_path = None
 
-def wait_for_completion(prompt_id, server_address, timeout=600, instance_id=None, debug=False):
-    """
-    Wait for prompt completion and extract execution time from History API timestamps.
-    Returns: (history, exec_time_seconds or None)
-    """
-    start_time = time.time()
-    last_health_check = 0
-    health_check_interval = 15
+    with zipfile.ZipFile(zip_path, 'r') as zf:
+        # Look for manifest.json at root or in common locations
+        manifest_locations = ['manifest.json', 'manifest.yaml', 'manifest.yml']
+        manifest_file = None
 
-    if debug:
-        print(f"[DEBUG] [{instance_id}] Waiting for prompt {prompt_id} on {server_address} (timeout: {timeout}s)")
+        for loc in manifest_locations:
+            if loc in zf.namelist():
+                manifest_file = loc
+                break
 
-    while time.time() - start_time < timeout:
-        elapsed = time.time() - start_time
+        if not manifest_file:
+            raise FileNotFoundError("No manifest.json/yaml found in ZIP package")
 
-        if debug and elapsed - last_health_check > health_check_interval:
-            try:
-                health = requests.get(f"http://{server_address}/system_stats", timeout=5)
-                if health.status_code == 200:
-                    stats = health.json()
-                    vram_total = stats.get("vram_total", "N/A")
-                    vram_free = stats.get("vram_free", "N/A")
-                    print(f"[HEALTH] [{instance_id}] VRAM: {vram_total} MB, Free: {vram_free} MB")
-                last_health_check = time.time()
-            except Exception as e:
-                print(f"[HEALTH] [{instance_id}] Failed: {e}")
+        # Extract manifest
+        zf.extract(manifest_file, temp_dir)
+        manifest_path = temp_dir / manifest_file
 
-        try:
-            response = requests.get(f"http://{server_address}/history/{prompt_id}", timeout=8)
-            if response.status_code == 200:
-                history = response.json()
-                if prompt_id in history:
-                    wall_clock_time = time.time() - start_time
-                    prompt_data = history[prompt_id]
-                    
-                    # Extract execution time from status.messages timestamps
-                    exec_time = None
-                    status = prompt_data.get("status", {})
-                    messages = status.get("messages", [])
-                    
-                    # Look for execution_start and execution_success timestamps
-                    start_ts = None
-                    end_ts = None
-                    
-                    for msg in messages:
-                        if isinstance(msg, list) and len(msg) >= 2:
-                            msg_type = msg[0]
-                            msg_data = msg[1] if isinstance(msg[1], dict) else {}
-                            
-                            if msg_type == "execution_start" and "timestamp" in msg_data:
-                                start_ts = msg_data["timestamp"]
-                            elif msg_type == "execution_success" and "timestamp" in msg_data:
-                                end_ts = msg_data["timestamp"]
-                    
-                    # Calculate execution time from timestamps (in milliseconds)
-                    if start_ts is not None and end_ts is not None:
-                        exec_time = (end_ts - start_ts) / 1000.0  # Convert ms to seconds
-                    
-                    if exec_time is not None:
-                        print(f"Prompt {prompt_id} completed in {wall_clock_time:.2f}s (exec: {exec_time:.2f}s)")
-                    else:
-                        print(f"Prompt {prompt_id} completed in {wall_clock_time:.2f}s")
-                    
-                    return history, exec_time
-                elif debug:
-                    print(f"[DEBUG] [{instance_id}] Prompt in history but not complete")
-            elif response.status_code == 404 and debug:
-                print(f"[DEBUG] [{instance_id}] History not found yet")
-            elif debug:
-                print(f"[DEBUG] [{instance_id}] History status: {response.status_code}")
-        except requests.Timeout:
-            if debug:
-                print(f"[TIMEOUT] [{instance_id}] Request timeout for /history/{prompt_id}")
-        except requests.ConnectionError:
-            if debug:
-                print(f"[ERROR] [{instance_id}] Connection lost to {server_address}")
-        except Exception as e:
-            if debug:
-                print(f"[ERROR] [{instance_id}] Wait error: {e}")
+        print(f"✓ Manifest extracted to: {manifest_path}")
 
-        time.sleep(2)
+        # Check for InstallTemp folder and extract it
+        install_temp_files = [f for f in zf.namelist() if f.startswith('InstallTemp/')]
+        if install_temp_files:
+            print(f"Found InstallTemp folder in package - extracting {len(install_temp_files)} files...")
+            install_temp_path = temp_dir / "InstallTemp"
 
-    raise TimeoutError(f"[{instance_id}] Prompt {prompt_id} timed out after {timeout}s on {server_address}")
+            # Extract all InstallTemp files
+            for file in install_temp_files:
+                zf.extract(file, temp_dir)
 
+            print(f"✓ InstallTemp extracted to: {install_temp_path}")
 
-def load_baseconfig(comfy_path, temp_dir=None, log_file=None):
-    baseconfig_path = Path(comfy_path) / "baseconfig.json"
-    paths_to_check = [baseconfig_path]
-    if temp_dir:
-        paths_to_check.append(Path(temp_dir) / "baseconfig.json")
-    selected_path = None
-    for path in paths_to_check:
-        if path.exists():
-            selected_path = path
-            break
-    if not selected_path:
-        print(f"Warning: baseconfig.json not found. Using defaults.")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Warning: baseconfig.json not found. Using defaults.\n")
-        return {"NUM_INSTANCES": 1, "GENERATIONS": 1}
-    try:
-        with open(selected_path, 'r', encoding='utf-8') as f:
-            baseconfig = json.load(f)
-        if not isinstance(baseconfig, dict):
-            raise ValueError("Invalid baseconfig.json")
-        config_values = {
-            "NUM_INSTANCES": baseconfig.get("NUM_INSTANCES", 1),
-            "GENERATIONS": baseconfig.get("GENERATIONS", 1)
-        }
-        print(f"Loaded baseconfig: NUM_INSTANCES={config_values['NUM_INSTANCES']}, GENERATIONS={config_values['GENERATIONS']}")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Loaded baseconfig from {selected_path}\n")
-        return config_values
-    except Exception as e:
-        print(f"Failed to load baseconfig: {e}. Using defaults.")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Failed to load baseconfig: {e}\n")
-        return {"NUM_INSTANCES": 1, "GENERATIONS": 1}
+        # Check for ComfyUI folder and merge it into installation
+        comfyui_files = [f for f in zf.namelist() if f.startswith('ComfyUI/') and not f.startswith('ComfyUI/.')]
+        if comfyui_files and comfy_path:
+            print(f"Found ComfyUI folder in package - merging {len(comfyui_files)} files...")
 
+            for file in comfyui_files:
+                # Extract to temp first
+                zf.extract(file, temp_dir)
 
-def interrupt_process(port):
-    server_address = f"127.0.0.1:{port}"
-    try:
-        response = requests.post(f"http://{server_address}/interrupt", timeout=5)
-        if response.status_code == 200:
-            print(f"Sent interrupt to {server_address}")
-            return True
-        else:
-            print(f"Interrupt failed: {response.text}")
-            return False
-    except requests.RequestException as e:
-        print(f"Interrupt error: {e}")
-        return False
+                # Determine source and destination
+                source_file = temp_dir / file
+                # Remove 'ComfyUI/' prefix to get relative path
+                relative_path = Path(file).relative_to('ComfyUI')
+                dest_file = comfy_path / relative_path
 
+                # Skip directories (they're created automatically)
+                if source_file.is_file():
+                    dest_file.parent.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(source_file, dest_file)
 
-def check_server_ready(port, timeout=60, interval=2):
-    server_address = f"127.0.0.1:{port}"
-    start_time = time.time()
-    while time.time() - start_time < timeout:
-        try:
-            response = requests.get(f"http://{server_address}/", timeout=5)
-            if response.status_code == 200:
-                print(f"Server on port {port} is ready")
-                return True
-        except requests.ConnectionError:
-            time.sleep(interval)
-    print(f"Error: Server on port {port} not ready after {timeout}s")
-    return False
+            print(f"✓ ComfyUI folder merged into {comfy_path}")
 
-
-def check_server_running(port):
-    server_address = f"127.0.0.1:{port}"
-    try:
-        response = requests.get(f"http://{server_address}/", timeout=3)
-        if response.status_code == 200:
-            print(f"Server already running on port {port}")
-            return True
-    except requests.ConnectionError:
-        return False
-    return False
-
-
-def capture_execution_times(proc, output_queue, capture_event, print_lock, log_file=None):
-    pattern = re.compile(r"Prompt executed in (\d+\.\d+) seconds")
-    progress_pattern = re.compile(r"\d+%\|.*?\| \d+/\d+ \[\d+:\d+.*?\d+\.\d+(?:it/s|s/it)\]")
-    error_pattern = re.compile(r"!!! Exception during processing !!!")
-    progress_buffer = []
-    error_detected = False
-    while True:
-        line = proc.stdout.readline()
-        if not line and proc.poll() is not None:
-            break
-        if line:
-            try:
-                line = line.decode('utf-8').strip()
-            except:
-                line = line.strip()
-            line = line.replace('█', '#').replace('▌', '#').replace('▎', '#')
-            
-            # Check for execution time FIRST, before printing
-            match = pattern.search(line)
-            if match and capture_event.is_set() and not error_detected:
-                exec_time = float(match.group(1))
-                output_queue.put(exec_time)
-            
-            with print_lock:
-                if error_pattern.search(line):
-                    error_detected = True
-                    print(line, flush=True)
-                    if log_file:
-                        with open(log_file, 'a', encoding='utf-8') as f:
-                            f.write(line + '\n')
-                elif progress_pattern.search(line):
-                    progress_buffer.append(line)
-                    print(f"\r{' ' * 120}\r{progress_buffer[-1]}", end='', flush=True)
-                    if log_file:
-                        with open(log_file, 'a', encoding='utf-8') as f:
-                            f.write(progress_buffer[-1] + '\n')
-                else:
-                    if progress_buffer:
-                        print(f"\n{progress_buffer[-1]}", flush=True)
-                        if log_file:
-                            with open(log_file, 'a', encoding='utf-8') as f:
-                                f.write(progress_buffer[-1] + '\n')
-                        progress_buffer = []
-                    print(line, flush=True)
-                    if log_file:
-                        with open(log_file, 'a', encoding='utf-8') as f:
-                            f.write(line + '\n')
-    with print_lock:
-        if progress_buffer:
-            print(f"\n{progress_buffer[-1]}", flush=True)
+        return manifest_path, install_temp_path
 
 
 def main():
+    """Main installer entry point."""
     if sys.platform == "win32":
         sys.stdout.reconfigure(encoding='utf-8')
 
-    parser = argparse.ArgumentParser(description="Run multiple ComfyUI instances concurrently.")
-    parser.add_argument("-n", "--num_instances", type=int, default=1)
-    parser.add_argument("-c", "--comfy_path", type=str, help="Path to ComfyUI folder")
-    parser.add_argument("-w", "--workflow_path", type=str, help="Path to workflow ZIP or folder")
-    parser.add_argument("-g", "--generations", type=int, default=1)
-    parser.add_argument("-e", "--extract_minimal", action="store_true")
-    parser.add_argument("-r", "--run_default", action="store_true")
-    parser.add_argument("-o", "--override", type=str)
-    parser.add_argument("-l", "--log", nargs='?', const=True, default=False)
-    parser.add_argument("-t", "--temp_path", type=str)
-    parser.add_argument("-p", "--port", type=int, default=8188)
-    parser.add_argument("-u", "--use_main_workflow_only", action="store_true")
-    parser.add_argument("--no-cleanup", action="store_true")
-    parser.add_argument("--debug-warmup", action="store_true", help="Enable verbose debug logging ONLY during warmup")
-    parser.add_argument("--extra_args", nargs=argparse.REMAINDER)
-    parser.add_argument("--force-extract", "-f", action="store_true", help="Force re-extraction of all models/nodes even if identical/newer")
-    parser.add_argument("--gui", action="store_true", help="Show a Qt-based GUI to pick -c and -w")
-    parser.add_argument("--timeout", type=int, default=4000, help="Timeout in seconds for prompt completion (default: 4000)")
+    parser = argparse.ArgumentParser(
+        description="ComfyUI Modular Installer - Install models, custom nodes, and assets from manifest files."
+    )
+    parser.add_argument("-c", "--comfy_path", type=str,
+                        help="Path to ComfyUI installation folder (default: auto-install to ~/ComfyUI_BP/ComfyUI)")
+    parser.add_argument("-m", "--manifest", type=str,
+                        help="Path to manifest.json/yaml file or ZIP package containing manifest")
+    parser.add_argument("--no-auto-install", action="store_true",
+                        help="Disable automatic ComfyUI installation if not found")
+    parser.add_argument("--install-path", type=str,
+                        help="Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)")
+    parser.add_argument("--skip-blender", action="store_true",
+                        help="Skip Blender 4.5 LTS installation (Windows only)")
+    parser.add_argument("--gui", action="store_true",
+                        help="Launch graphical installer interface")
+    parser.add_argument("-l", "--log", nargs='?', const=True, default=False,
+                        help="Enable logging to file")
+    parser.add_argument("-t", "--temp_path", type=str,
+                        help="Alternate temporary directory for extraction")
+    parser.add_argument("--force", "-f", action="store_true",
+                        help="Force re-download/installation of all items")
+    parser.add_argument("--required-only", action="store_true",
+                        help="Only install items marked as required")
+    parser.add_argument("--no-verify", action="store_true",
+                        help="Skip checksum verification for downloads")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Preview actions without executing downloads")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Disable parallel downloads (use sequential mode)")
+    parser.add_argument("--workers", type=int, default=4,
+                        help="Number of parallel download workers (default: 4)")
+    parser.add_argument("--no-resume", action="store_true",
+                        help="Disable resume capability for interrupted downloads")
+    parser.add_argument("--list-contents", action="store_true",
+                        help="List manifest contents without installing")
+    parser.add_argument("--cleanup", action="store_true",
+                        help="Clean up partial download files and exit")
+    parser.add_argument("--keep-extracted", action="store_true",
+                        help="Keep extracted temporary files for debugging (don't auto-cleanup)")
 
     args = parser.parse_args()
 
+    # === FROZEN EXECUTABLE DETECTION ===
+    # If running as a frozen executable (PyInstaller, cx_Freeze, etc.), force GUI mode
+    if getattr(sys, 'frozen', False):
+        # Check for bundled package.zip in two locations:
+        # 1. Inside the executable (PyInstaller --add-data)
+        # 2. External file alongside the executable
+        bundled_package = None
+
+        if hasattr(sys, '_MEIPASS'):
+            # PyInstaller extracts bundled data to _MEIPASS temp directory
+            internal_package = Path(sys._MEIPASS) / "package.zip"
+            if internal_package.exists():
+                bundled_package = internal_package
+
+        if not bundled_package:
+            # Check for external package.zip alongside the executable
+            exe_dir = Path(sys.executable).parent
+            external_package = exe_dir / "package.zip"
+            if external_package.exists():
+                bundled_package = external_package
+
+        if not args.gui:
+            if bundled_package:
+                print(f"Detected frozen executable with bundled package.zip - launching GUI mode...")
+            else:
+                print("Detected frozen executable - launching GUI mode...")
+            args.gui = True
+
     # === GUI MODE ===
     if args.gui:
-        comfy_path_arg = Path(args.comfy_path).resolve() if args.comfy_path else None
-        workflow_path_arg = Path(args.workflow_path).resolve() if args.workflow_path else None
         try:
-            gui_result = run_gui(
-                comfy_path=comfy_path_arg,
-                workflow_path=workflow_path_arg,
-                extract_minimal=args.extract_minimal,
-                port=args.port,
-                generations=args.generations,
-                num_instances=args.num_instances,
-                run_default=args.run_default,
-                extra_args=args.extra_args or [],
-                debug_warmup=args.debug_warmup,
-                no_cleanup=args.no_cleanup,
-                use_main_workflow_only=args.use_main_workflow_only,
-                force_extract=args.force_extract,  
-                override=args.override
-            )
-        except SystemExit:
-            sys.exit(0)
-        # Apply GUI results
-        args.comfy_path = str(gui_result['comfy_path'])
-        args.workflow_path = str(gui_result['workflow_path'])
-        args.extract_minimal = gui_result['extract_minimal']
-        args.port = gui_result['port']
-        args.generations = gui_result['generations']
-        args.num_instances = gui_result['num_instances']
-        args.run_default = gui_result['run_default']
-        args.extra_args = gui_result['extra_args']
-        args.debug_warmup = gui_result['debug_warmup']
-        args.no_cleanup = gui_result['no_cleanup']
-        args.use_main_workflow_only = gui_result['use_main_workflow_only']
-        args.override = gui_result['override']
+            from core.installer_gui import run_installer_gui
+            result = run_installer_gui()
+            return 0 if result and result.get('success') else 1
+        except ImportError:
+            print("❌ ERROR: Qt bindings not found. Please install PySide6:")
+            print("   pip install PySide6")
+            return 1
+        except Exception as e:
+            print(f"❌ ERROR: GUI failed to launch: {e}")
+            return 1
+
+    if not args.manifest and not args.cleanup:
+        parser.error("--manifest (-m) is required unless using --cleanup")
+
+    # === COMFYUI INSTALLATION/DETECTION ===
+    install_path = Path(args.install_path) if args.install_path else ComfyUIInstaller.DEFAULT_INSTALL_PATH
+    comfyui_installer = ComfyUIInstaller(install_path=install_path)
+
+    # Determine ComfyUI path
+    if args.comfy_path:
+        # User specified path - check for embedded Python
+        comfy_path = Path(args.comfy_path).resolve()
+
+        # Try to find embedded Python at the specified path
+        # Need to go up to the install root to check for python_embeded
+        install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path
+
+        possible_python_paths = [
+            install_root / "python_embeded" / "python.exe",
+            install_root / "python_embedded" / "python.exe",
+            comfy_path / ".." / "python_embeded" / "python.exe",
+            comfy_path / ".." / "python_embedded" / "python.exe",
+        ]
+
+        python_executable = None
+        for py_path in possible_python_paths:
+            resolved_path = py_path.resolve()
+            if resolved_path.exists():
+                python_executable = resolved_path
+                print(f"✓ Found embedded Python: {python_executable}")
+                break
+
+        if not python_executable:
+            print(f"⚠ No embedded Python found at {comfy_path}")
+            print(f"  Will use system Python for pip installations: {sys.executable}")
+            print(f"  Note: Packages may not be visible to ComfyUI")
+            python_executable = None  # Will fall back to sys.executable in ManifestHandler
     else:
-        if not args.comfy_path:
-            parser.error("--comfy_path (-c) is required when not using --gui.")
-        if not args.workflow_path:
-            parser.error("--workflow_path (-w) is required when not using --gui.")
+        # Auto-detect or install ComfyUI
+        print("\n" + "=" * 60)
+        print("COMFYUI INSTALLATION CHECK")
+        print("=" * 60)
+
+        if comfyui_installer.check_existing_installation():
+            # Existing installation found
+            print(f"✓ ComfyUI found at: {install_path}")
+
+            # Get installation info
+            info = comfyui_installer.get_installation_info()
+            comfy_path = info['comfyui_path']
+            python_executable = info['python_executable']
+
+            if python_executable:
+                print(f"✓ Embedded Python found: {python_executable}")
+
+            # Prompt user for action
+            if not args.cleanup:
+                user_choice = ComfyUIInstaller.prompt_user_action()
+                if user_choice == 2:
+                    print("\nInstallation cancelled by user.")
+                    return 0
+                # Choice 1: Continue with existing installation
+
+        else:
+            # No installation found
+            print(f"⊘ ComfyUI not found at: {install_path}")
+
+            if args.no_auto_install:
+                print("❌ ERROR: ComfyUI not found and auto-install is disabled")
+                print(f"   Please install ComfyUI manually or remove --no-auto-install flag")
+                return 1
+
+            # Prompt to install
+            print("\nWould you like to download and install ComfyUI portable? (y/n): ", end="")
+            try:
+                response = input().strip().lower()
+                if response != 'y':
+                    print("\nInstallation cancelled by user.")
+                    return 0
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nInstallation cancelled by user.")
+                return 0
+
+            # Install ComfyUI
+            print("\n" + "=" * 60)
+            print("INSTALLING COMFYUI")
+            print("=" * 60)
+            success, message = comfyui_installer.install_comfyui()
+            if not success:
+                print(f"❌ ERROR: {message}")
+                return 1
+
+            print(f"✓ {message}")
+
+            # Get installation info after install
+            info = comfyui_installer.get_installation_info()
+            comfy_path = info['comfyui_path']
+            python_executable = info['python_executable']
+
+            if python_executable:
+                print(f"✓ Embedded Python: {python_executable}")
+
+        print("=" * 60 + "\n")
+
+    # Validate ComfyUI path
+    if not comfy_path or not comfy_path.exists():
+        print(f"❌ ERROR: ComfyUI path does not exist: {comfy_path}")
+        return 1
+
+    # === BLENDER INSTALLATION (Windows only) ===
+    if not args.skip_blender and sys.platform == "win32":
+        print("\n" + "=" * 60)
+        print("BLENDER INSTALLATION CHECK")
+        print("=" * 60)
+
+        if comfyui_installer.check_blender_installed():
+            print("✓ Blender 4.5 LTS is already installed")
+        else:
+            print("⊘ Blender 4.5 LTS not found")
+            print("\nBlender is used for 3D object generation in ComfyUI.")
+            print("Would you like to install Blender 4.5 LTS? (y/n): ", end="")
+            try:
+                response = input().strip().lower()
+                if response == 'y':
+                    print("\n" + "=" * 60)
+                    print("INSTALLING BLENDER")
+                    print("=" * 60)
+                    success, message = comfyui_installer.install_blender()
+                    if success:
+                        print(f"✓ {message}")
+                    else:
+                        print(f"⚠ {message}")
+                        print("  You can continue without Blender or install it manually later.")
+                else:
+                    print("\nSkipping Blender installation.")
+            except (KeyboardInterrupt, EOFError):
+                print("\n\nSkipping Blender installation.")
+
+        print("=" * 60 + "\n")
+    else:
+        # Blender installation skipped
+        if args.skip_blender:
+            print("⊘ Skipping Blender installation (--skip-blender flag used)")
+        elif sys.platform != "win32":
+            print("⊘ Skipping Blender installation (not supported on this platform)")
+
+    # === CLEANUP MODE ===
+    if args.cleanup:
+        print("Cleaning up partial downloads...")
+        handler = ManifestHandler(
+            manifest_path=comfy_path / "manifest.json",  # Dummy path
+            comfy_path=comfy_path,
+            resume_downloads=True
+        )
+        handler.cleanup_partial_downloads()
+        return 0
 
     # === LOG FILE ===
     log_file = None
     if args.log is not False:
-        workflow_basename = Path(args.workflow_path).stem
-        timestamp = datetime.now().strftime("%y%m%d_") + str(int(time.time()))
-        log_file = Path(args.log).resolve() if args.log is not True else Path(f"{workflow_basename}_{timestamp}.txt").resolve()
+        manifest_basename = Path(args.manifest).stem
+        timestamp = datetime.now().strftime("%y%m%d_%H%M%S")
+        log_file = Path(args.log).resolve() if args.log is not True else Path(f"{manifest_basename}_install_{timestamp}.txt").resolve()
         if log_file.is_dir():
-            log_file = log_file / f"{workflow_basename}_{timestamp}.txt"
+            log_file = log_file / f"{manifest_basename}_install_{timestamp}.txt"
         print(f"Logging to: {log_file}")
         with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f"Run started: {datetime.now()}\n")
+            f.write(f"Installation started: {datetime.now()}\n")
 
-    workflow_path = Path(args.workflow_path).resolve()
-    warmup_workflow_path = None
-    comfy_path = Path(args.comfy_path).resolve()
+    manifest_path = Path(args.manifest).resolve()
+    temp_dir = None
     package_manager = None
-    extra_args = args.extra_args or []
-
-    # === INIT LISTS ===
-    processes = []
-    ports = []
-
-    # === TIMESTAMP FOR ENTIRE RUN ===
-    run_timestamp = datetime.now().strftime("%H%M%S")
 
     try:
-        # Handle workflow
-        if workflow_path.is_dir():
-            workflow_path = workflow_path / "workflow.json"
-            warmup_workflow_path = workflow_path.parent / "warmup.json" if not args.use_main_workflow_only else workflow_path
-            if not warmup_workflow_path.exists():
-                warmup_workflow_path = workflow_path
-            if not workflow_path.exists():
-                raise FileNotFoundError("workflow.json not found")
-        elif workflow_path.suffix.lower() == '.zip':
+        print("\n" + "=" * 60)
+        print("ComfyUI Modular Installer")
+        print("=" * 60)
+        print(f"ComfyUI Path: {comfy_path}")
+        print(f"Manifest: {manifest_path}")
+        print("=" * 60 + "\n")
+
+        # === HANDLE MANIFEST SOURCE ===
+        install_temp_path = None  # Will be set if InstallTemp folder exists in ZIP
+        if manifest_path.suffix.lower() == '.zip':
+            # Extract manifest from ZIP package
+            temp_dir = Path(args.temp_path) / f"manifest_temp_{datetime.now().strftime('%Y%m%d_%H%M%S')}" if args.temp_path else comfy_path / f"temp_manifest_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+            manifest_path, install_temp_path = extract_manifest_from_zip(manifest_path, temp_dir, comfy_path)
+
+            # Also use PackageManager to extract bundled files if present
+            print("\n[2/3] Extracting bundled files from package...")
             package_manager = PackageManager(
-                zip_path=workflow_path,
+                zip_path=Path(args.manifest).resolve(),
                 comfy_path=comfy_path,
                 temp_path=args.temp_path,
-                extract_minimal=args.extract_minimal,
-                force_extract=args.force_extract,
+                extract_minimal=False,
+                force_extract=args.force,
                 log_file=log_file
             )
-            workflow_path = package_manager.extract_zip()
-            warmup_workflow_path = workflow_path.parent / "warmup.json" if not args.use_main_workflow_only else workflow_path
-            if not warmup_workflow_path.exists():
-                warmup_workflow_path = workflow_path
-        elif workflow_path.suffix.lower() == '.json':
-            # Handle standalone .json file
-            warmup_workflow_path = workflow_path.parent / "warmup.json" if not args.use_main_workflow_only else workflow_path
-            if not warmup_workflow_path.exists():
-                warmup_workflow_path = workflow_path
+            # PackageManager will handle extraction of bundled files
+            try:
+                package_manager.extract_zip()
+                print("✓ Bundled files extracted")
+            except Exception as e:
+                print(f"⚠ No bundled files in package or extraction failed: {e}")
+
+        elif manifest_path.suffix.lower() in ['.json', '.yaml', '.yml']:
+            print(f"Using manifest: {manifest_path}")
         else:
-            raise ValueError("Invalid workflow path: must be .zip, .json, or directory")
+            raise ValueError("Manifest must be .json, .yaml, .yml, or .zip file")
 
-        workflow_manager = WorkflowManager(workflow_path=workflow_path, log_file=log_file)
-        workflow_manager.load_workflow()
-        warmup_workflow_manager = WorkflowManager(workflow_path=warmup_workflow_path, log_file=log_file)
-        warmup_workflow_manager.load_workflow()
+        # === INITIALIZE MANIFEST HANDLER ===
+        print("\n[2/3] Loading manifest...")
+        handler = ManifestHandler(
+            manifest_path=manifest_path,
+            comfy_path=comfy_path,
+            log_file=log_file,
+            max_workers=args.workers,
+            resume_downloads=not args.no_resume,
+            python_executable=python_executable,
+            install_temp_path=install_temp_path
+        )
 
-        if args.override:
-            workflow_manager.apply_overrides(args.override)
-            warmup_workflow_manager.apply_overrides(args.override)
+        # Load and validate manifest
+        handler.load_manifest()
+        handler.validate_manifest()
 
-        benchmark_node_manager = BenchmarkNodeManager(custom_nodes_path=comfy_path / "custom_nodes")
+        # Ensure prerequisites (git, git-lfs) are available
+        handler.ensure_prerequisites()
 
-        num_instances = args.num_instances
-        generations = args.generations
-        if args.run_default:
-            bc = load_baseconfig(comfy_path, package_manager.temp_dir if package_manager else None, log_file)
-            if args.num_instances == 1: num_instances = bc["NUM_INSTANCES"]
-            if args.generations == 1: generations = bc["GENERATIONS"]
-
-        base_port = args.port
-        output_queues = [Queue() for _ in range(num_instances)]
-        capture_events = [Event() for _ in range(num_instances)]
-        print_lock = Lock()
-
-        print(f"Starting {num_instances} instances...")
-        for i in range(num_instances):
-            port = base_port + i
-            ports.append(port)
-            if check_server_running(port):
-                # FIX: Check the top-level package_manager flag, not just the nested extractor flag.
-                # The PackageManager aggregates results from both the SmartExtractor AND the ManifestIntegration.
-                if package_manager and getattr(package_manager, "custom_nodes_extracted", False):
-                    print("Custom nodes were installed while a server was already running.  ComfyUI must be restarted before running the benchmark.")
-                    show_restart_required_dialog(
-                        package_manager=package_manager,
-                        args=args,
-                        python_exe=get_comfy_python(comfy_path),
-                        script_fpath=(__file__),
-                        log_file=log_file
-
-                    )
-
-                    # Optionally: exit after dialog so user can restart
-                    print("Exiting. Please restart ComfyUI and re-run the command.")
-                    sys.exit(0)
-                processes.append(None)
-                continue
-            python_exe = get_comfy_python(comfy_path)
-            cmd = [
-                python_exe,
-                "main.py",
-                "--port", str(port),
-                "--disable-xformers",
-                *extra_args
-            ]
-            proc = subprocess.Popen(
-                cmd, cwd=comfy_path, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP if sys.platform == "win32" else 0,
-                text=True, bufsize=1
-            )
-            processes.append(proc)
-            print(f"Started instance {i+1} on port {port} (PID: {proc.pid})")
-            Thread(target=capture_execution_times, args=(proc, output_queues[i], capture_events[i], print_lock, log_file), daemon=True).start()
-
-        for i, port in enumerate(ports):
-            if processes[i] is None: continue
-            if not check_server_ready(port): raise RuntimeError(f"Server {port} failed")
-
-        client_ids = [str(uuid.uuid4()) for _ in ports]
-
-        def generation_task(idx, gen, is_warmup=False):
-            instance_id = f"Inst{idx+1}"
-            port = ports[idx]
-            server_address = f"127.0.0.1:{port}"
-            client_id = client_ids[idx]
-            debug = args.debug_warmup and is_warmup
-
-            prefix_type = "WARMUP" if is_warmup else "RUN"
-            gen_num = 1 if is_warmup else gen + 1
-            instance_num = idx + 1
+        # Check for gated models and prompt for HF token if needed
+        if handler.has_gated_models() and not handler.hf_token:
+            print("\n" + "=" * 60)
+            print("⚠ HUGGINGFACE TOKEN REQUIRED")
+            print("=" * 60)
+            print("This package includes gated models that require a HuggingFace token.")
+            print("\nTo get a token:")
+            print("  1. Visit https://huggingface.co/settings/tokens")
+            print("  2. Create a new token with 'Read' permission")
+            print("  3. Accept the license for gated models on HuggingFace")
+            print("  4. Paste the token below")
+            print("\nAlternatively, set the HF_TOKEN environment variable.")
+            print("=" * 60)
 
             try:
-                # DON'T enable stdout capture - we'll use History API instead
-                # (stdout capture would create duplicates)
-                
-                print(f"[{instance_id}] Starting {'warmup' if is_warmup else f'gen {gen+1}'}")
-                manager = warmup_workflow_manager if is_warmup else workflow_manager
-                workflow = manager.get_workflow(randomize_seeds=True)
+                token = input("\nEnter your HuggingFace token (or press Enter to skip): ").strip()
+                if token:
+                    handler.set_hf_token(token)
+                    print("✓ HuggingFace token set")
+                else:
+                    print("⚠ No token provided - gated models may fail to download")
+            except (KeyboardInterrupt, EOFError):
+                print("\n⚠ No token provided - gated models may fail to download")
 
-                # === UPDATE filename_prefix ===
-                workflow = manager.update_filename_prefixes_in_copy(workflow, prefix_type, instance_num, gen_num, run_timestamp)
+        # Print summary
+        handler.print_summary()
 
-                if benchmark_node_manager.exists:
-                    # Find existing Benchmark Workflow node
-                    bid = next((nid for nid, n in workflow.items() if n.get("_meta", {}).get("title") == "Benchmark Workflow"), None)
-                    
-                    # Only modify if node already exists in workflow - don't create new ones
-                    if bid:
-                        node = workflow[bid]
-                        node["inputs"]["file_postfix"] = "_warmup_" if is_warmup else f"_RUN_{gen+1}.{idx+1}"
+        # === LIST CONTENTS MODE ===
+        if args.list_contents:
+            print("\n" + "=" * 60)
+            print("MANIFEST ITEMS")
+            print("=" * 60)
+            for item in handler.manifest['items']:
+                print(f"\n{item['name']}")
+                print(f"  Type: {item['type']}")
+                print(f"  Source: {item['source']}")
+                if 'path' in item:
+                    print(f"  Destination: {item['path']}")
+                if item.get('required'):
+                    print(f"  Required: Yes")
+                if item.get('size_mb'):
+                    print(f"  Size: {item['size_mb']:.1f} MB")
+            print("=" * 60 + "\n")
+            return 0
 
-                print(f"[{instance_id}] Queueing...")
-                resp = requests.post(f"http://{server_address}/prompt", json={"prompt": workflow, "client_id": client_id}, timeout=30)
-                if resp.status_code != 200:
-                    raise Exception(f"Queue failed: {resp.text}")
-                prompt_id = resp.json()["prompt_id"]
-                print(f"[{instance_id}] Queued: {prompt_id}")
+        # === DOWNLOAD/INSTALL ITEMS ===
+        print("\n[3/3] Installing items...")
+        handler.download_items(
+            skip_existing=not args.force,
+            required_only=args.required_only,
+            verify_checksums=not args.no_verify,
+            dry_run=args.dry_run,
+            parallel=not args.sequential
+        )
 
-                history, exec_time = wait_for_completion(prompt_id, server_address, timeout=4000 if not is_warmup else 3600, instance_id=instance_id, debug=debug)
+        if args.dry_run:
+            print("\n✓ Dry run completed (no changes made)")
+            return 0
 
-                # Store execution time for non-warmup runs (from History API only)
-                if not is_warmup and exec_time:
-                    output_queues[idx].put(exec_time)
+        # === INSTALLATION SUMMARY ===
+        print("\n" + "=" * 60)
+        print("INSTALLATION COMPLETE")
+        print("=" * 60)
 
-                print(f"[{instance_id}] {'Warmup' if is_warmup else f'Gen {gen+1}'} completed")
-            except Exception as e:
-                print(f"[{instance_id}] ERROR: {e}")
-                if log_file:
-                    with open(log_file, 'a', encoding='utf-8') as f:
-                        f.write(f"[{instance_id}] ERROR: {e}\n")
-                raise
+        package_info = handler.manifest.get('package', {})
+        package_name = package_info.get('name', 'unknown')
 
-        # === SAFE SEQUENTIAL WARMUP ===
-        print("Performing SAFE sequential warmup to prevent VRAM OOM...")
-        if log_file:
-            with open(log_file, 'a', encoding='utf-8') as f:
-                f.write("SAFE sequential warmup started\n")
+        print(f"Package: {package_name}")
+        if package_info.get('version'):
+            print(f"Version: {package_info['version']}")
+        print(f"ComfyUI Path: {comfy_path}")
 
-        for idx in range(num_instances):
-            port = ports[idx]
-            instance_id = f"Inst{idx+1}"
-            print(f"[WARMUP] Starting {instance_id} on port {port}")
-            try:
-                generation_task(idx, -1, is_warmup=True)
-                print(f"[WARMUP] {instance_id} completed")
-            except Exception as e:
-                error_msg = f"[WARMUP] {instance_id} FAILED: {e}"
-                print(error_msg)
-                if log_file:
-                    with open(log_file, 'a', encoding='utf-8') as f:
-                        f.write(error_msg + "\n")
-                if "memory" in str(e).lower() or "cuda" in str(e).lower():
-                    raise RuntimeError(f"CUDA OOM on {instance_id}. Reduce instances or use --lowvram.")
-                raise
-            finally:
-                print(f"[WARMUP] Freeing VRAM on {instance_id}")
-                interrupt_process(port)
-                time.sleep(3)
+        # Print what was downloaded/installed
+        if handler.downloaded_items:
+            print(f"\n✓ Items installed: {len(handler.downloaded_items)}")
+            for item in handler.downloaded_items[:5]:  # Show first 5
+                print(f"  - {item['name']}")
+            if len(handler.downloaded_items) > 5:
+                print(f"  ... and {len(handler.downloaded_items) - 5} more")
 
-        print("All warmups completed safely.")
+        if handler.skipped_items:
+            print(f"\n⊘ Items skipped (already up-to-date): {len(handler.skipped_items)}")
 
-        # Clear queues
-        for q in output_queues:
-            while not q.empty(): q.get()
+        # Check if restart is needed
+        if handler.custom_nodes_were_downloaded():
+            print(f"\n⚠️  IMPORTANT: Restart ComfyUI to load new custom nodes")
 
-        # MAIN RUN
-        start_time = time.time()
-        try:
-            for gen in range(generations):
-                print(f"Generation round {gen+1}/{generations}")
-                with ThreadPoolExecutor(max_workers=num_instances) as executor:
-                    futures = [executor.submit(generation_task, idx, gen, False) for idx in range(num_instances)]
-                    for f in as_completed(futures):
-                        f.result()
-        except KeyboardInterrupt:
-            print("Interrupted. Partial metrics...")
-            raise
-
-        # METRICS
-        wall_clock_time = time.time() - start_time
-        total_images = num_instances * generations
-        exec_times = []
-        for q in output_queues:
-            while not q.empty():
-                exec_times.append(q.get())
-        
-        if exec_times:
-            total_exec = sum(exec_times)
-            avg_exec = total_exec / len(exec_times)
-            apm = total_images / (total_exec / 60) if total_exec > 0 else 0
-            atpi = total_exec / total_images if total_images > 0 else 0
-            
-            print(f"\nUsing History API timestamps: {len(exec_times)} measurements captured")
-        else:
-            # Fallback to wall clock time
-            total_exec = wall_clock_time
-            avg_exec = wall_clock_time / total_images if total_images > 0 else 0
-            apm = total_images / (wall_clock_time / 60) if wall_clock_time > 0 else 0
-            atpi = wall_clock_time / total_images if total_images > 0 else 0
-            print(f"\nWarning: No execution times captured, using wall clock time (includes HTTP overhead)")
-
-        # === PACKAGE NAME ===
-        package_name = "N/A"
-        if package_manager and hasattr(package_manager, 'package_name'):
-            package_name = package_manager.package_name
-        elif args.workflow_path:
-            original_path = Path(args.workflow_path)
-            package_name = original_path.stem
-            if original_path.suffix.lower() == '.zip' and package_manager and package_manager.temp_dir:
-                inner_dir = package_manager.temp_dir
-                if inner_dir.exists():
-                    package_name = inner_dir.name
-
-        print("\n" + "#" * 50)
-        print("####_RESULTS_SUMMARY_####")
-        print(f"Benchmarking Package: {package_name}")
-        if num_instances > 1:
-            print(f"Number of Concurrent ComfyUI Instances: {num_instances}")
-            print(f"Number of Generations per Instance: {generations}")
-        else:
-            print(f"Number of Generations: {generations}")
-        
-        if exec_times:
-            print(f"Workflow Execution Time: {total_exec:.2f}s | Benchmark Execution Time: {wall_clock_time:.2f}s")
-            #print(f"Overhead: {wall_clock_time - total_exec:.2f}s ({((wall_clock_time - total_exec) / wall_clock_time * 100):.1f}%)")
-            print(f"Assets Generated: {total_images} | Avg time per Asset: {atpi:.2f}s | APM: {apm:.2f}")
-        else:
-            print("****Could not access internal ComfyUI runtime data, benchmark results may not be accurate****")
-            print(f"Total time: {wall_clock_time:.2f}s | Assets Generated: {total_images} | Avg/sec per Asset: {atpi:.2f} | APM: {apm:.2f}")
-        print("#" * 50 + "\n")
+        print("=" * 60 + "\n")
 
         if log_file:
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write('####_RESULTS_SUMMARY_####\n')
-                f.write(f"Benchmarking Package: {package_name}\n")
-                if num_instances > 1:
-                    f.write(f"Number of Concurrent ComfyUI Instances: {num_instances}\n")
-                    f.write(f"Number of Image Generations per Instance: {generations}\n")
-                else:
-                    f.write(f"Number of Image Generations: {generations}\n")
-                
-                if exec_times:
-                    f.write(f"Workflow Execution Time: {total_exec:.2f}s | Overall Benchmark Execution Time: {wall_clock_time:.2f}s\n")
-                    #f.write(f"Overhead: {wall_clock_time - total_exec:.2f}s ({((wall_clock_time - total_exec) / wall_clock_time * 100):.1f}%)\n")
-                    f.write(f"Assets Generated: {total_images} | Avg Execution time per Asset: {atpi:.2f}s | APM: {apm:.2f}\n")
-                else:
-                    f.write("****Could not access internal ComfyUI runtime data, benchmark results may not be accurate****")
-                    f.write(f"Total time: {wall_clock_time:.2f}s | Assets Generated: {total_images} | Avg/sec per Asset: {atpi:.2f} | APM: {apm:.2f}\n")
+                f.write(f"\nInstallation completed: {datetime.now()}\n")
+                f.write(f"Package: {package_name}\n")
 
     except KeyboardInterrupt:
-        print("User interrupt.")
-    finally:
-        if args.no_cleanup:
-            print("Skipping cleanup (--no-cleanup)")
-        else:
-            print("Cleaning up...")
-            for i, proc in enumerate(processes):
-                if not proc: continue
-                port = base_port + i
-                server = f"127.0.0.1:{port}"
-                try:
-                    q = requests.get(f"http://{server}/queue", timeout=3)
-                    if q.status_code == 200 and (q.json().get("queue_running") or q.json().get("queue_pending")):
-                        interrupt_process(port)
-                        time.sleep(3)
-                except: pass
-                if proc.poll() is None:
-                    proc.terminate()
-                    try: proc.wait(10)
-                    except: proc.kill()
-            if package_manager: package_manager.cleanup()
-            print("Cleanup done.")
+        print("\n\nInstallation interrupted by user.")
         if log_file:
             with open(log_file, 'a', encoding='utf-8') as f:
-                f.write(f"Log: {log_file}\n")
-        print("Done.")
+                f.write(f"Installation interrupted: {datetime.now()}\n")
+        return 1
+    except Exception as e:
+        print(f"\n\n❌ ERROR: {e}")
+        if log_file:
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"ERROR: {e}\n")
+        import traceback
+        traceback.print_exc()
+        return 1
+    finally:
+        # Cleanup temporary files (unless --keep-extracted flag is set)
+        if temp_dir and temp_dir.exists():
+            if args.keep_extracted:
+                print(f"\n⚠ Keeping extracted files for debugging: {temp_dir}")
+                print("  Use --cleanup to remove them later")
+            else:
+                print("\nCleaning up temporary files...")
+                import shutil
+                try:
+                    shutil.rmtree(temp_dir)
+                    print("✓ Cleanup complete")
+                except Exception as e:
+                    print(f"⚠ Cleanup warning: {e}")
+
+        if log_file:
+            print(f"\nLog file: {log_file}")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

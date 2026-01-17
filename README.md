@@ -1,422 +1,730 @@
-# ComfyUI Benchmarking Framework
+# ComfyUI Modular Installer
 
 ## Overview
-This framework automates benchmarking of ComfyUI workflows by running prebuilt benchmarking packages. These packages are ZIP archives containing workflow JSON files, models, and assets needed for image or video generation tasks. The script launches ComfyUI instances, performs a warmup run (to load models into memory), and then executes the specified number of generations while measuring performance metrics.
+The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI models, custom nodes, and assets. It uses declarative manifest files to specify what should be downloaded and where, supporting multiple sources including HuggingFace, Git repositories, direct URLs, and local files.
 
-Key features:
-- Supports concurrent ComfyUI instances for multi-GPU or advanced benchmarking.
-- Handles ZIP package extraction, custom node installation, and script execution (pre.py/post.py).
-- Applies overrides to workflows via JSON files.
-- Integrates with the `comfyui-benchmark` custom node for detailed statistics (if installed).
-- Generates metrics like images per minute, average time per image, and execution times.
-- Logs output and handles cleanup, including process termination and temporary directories.
+### Key Features
+- **Automatic ComfyUI Installation**: Automatically downloads and installs ComfyUI portable on Windows
+- **Blender Integration**: Auto-install Blender 4.5 LTS via winget (Windows only)
+- **GUI and CLI modes**: Choose between graphical interface or command-line operation
+- **Manifest-driven**: Declare all dependencies in a single JSON/YAML file
+- **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, and pip packages
+- **Flexible path management**: Install to ComfyUI, home directory, temp, or absolute paths
+- **Embedded Python support**: Automatically uses ComfyUI's embedded Python for package installations
+- **Smart caching**: Skip already-downloaded files and verify checksums
+- **Parallel downloads**: Download multiple items simultaneously for faster installation
+- **Resume capability**: Continue interrupted downloads from where they left off
+- **Bundled packages**: Include files directly in ZIP packages alongside the manifest
 
 ## Prerequisites
-1. A working Git installation
-   
-## Installation/Setup
-1. Install ComfyUI (portable, manual installation or desktop app version).
-2. Open a CMD, Powershell or Terminal console in the ComfyUI folder of your ComfyUI installation.  Note: For desktop application installations this folder will be located in the user Documents directory.
-3. Use Git to clone this repository:  ```git clone https://github.com/SKilbride/ComfyUI-Benchmark-Framework```
-4. NOTE: All Python commands must utilize the python environment used with ComfyUI, for Python
-5. CD into the ComfyUI-Benchmark-Framework directory
-6. Install the necessary dependencies ```python -m pip install -r requirements.txt```
-7. Optionally install the `comfyui-benchmark` custom node for enhanced benchmarking output (JSON statistics files).
+1. Git (for cloning custom node repositories)
+2. Python 3.8 or higher (for the installer itself; ComfyUI portable includes embedded Python)
+3. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
+4. Windows (for auto-installation feature; manual ComfyUI installation required on Linux/Mac)
 
-## Running the Benchmark
-The benchmarking framework works by running prebuilt benchmarking packages. These packages contain all the necessary primary and secondary model files required to run a dedicated benchmark workflow. Workflow files are ComfyUI JSON workflow files configured for running using the ComfyUI API mode.
+## Installation
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/SKilbride/ModularInstaller
+   cd ModularInstaller
+   ```
 
-**Warmup:** Each benchmarking run performs an initial warmup run to load models into memory and initialize the pipeline. The warmup time is not included in any benchmarking metrics. By default, it uses `warmup.json` if available; use `-u` to force `workflow.json` for warmup.
+2. Install dependencies:
+   ```bash
+   python -m pip install -r requirements.txt
+   ```
 
-## Usage:
-### GUI Mode 
-Running the benchmark framework in GUI mode provides a visual interface for setting the benchmark options and running the benchmark framework
-<img width="1105" height="604" alt="image" src="https://github.com/user-attachments/assets/eef79223-ca69-4d38-94cf-5d13116b28d6" />
+## Quick Start
 
-Launch the benchmark framework with GUI
-```
-python run_comfyui_benchmark_framework.py --gui
-```
-***ComfyUI Folder:*** 
-> Select the "ComfyUI" folder of your ComfyUI installation. 
+### GUI Mode (Recommended for Beginners)
+Launch the graphical installer:
 
-***Workflow:*** 
-> Select the packaged benchmark .zip file. Alternately a benchmarking .json file can be selected within a folder containing the required benchmarking files. When selecting a .json file for benchmarking, the *Use Folder (for .json)* checkbox should be enabled.
-
-***Port:***
-> Specify the port to use when running ComfyUI. ComfyUI manual installations and ComfyUI portable installations use port 8188 by default, while ComfyUI Desktop App uses port 8000 by default.
-
-***Number of Generations:***
-> Specify the number of assets to generate.  Depending on the workflow images, video, or 3D objects are amoung the types of assets which may be generated. For image based assets, 10 is good default value, while for video, a single video may be a good default value. 
-
-***Use Package Defaults:***
-> Use the benchnark package default values for the number of generations and number of concurrent sessions. Benchmark packages contain a baseconfig.json file which contains the recommended default values values for the benchmark package. Using package defaults will automatically set the benchmark to use these values. 
-
-#### Advanced Options
-*Note: Settings in the Advanced Option section are for benchmarking advanced use case workflows.*
-<img width="1128" height="859" alt="image" src="https://github.com/user-attachments/assets/ee5cb5c9-4e50-4679-9e21-5c2641b0c142" />
-
-***Concurrent Sessions:***
-> Specify the number of concurrent sessions of ComfyUI. Running with more than one session will launch multiple ComfyUI server instances and run workloads in parallel on each session. The number of concurrent sessions possible is limited by the size of the models in the benchmarking workflow and the amount of available VRAM. Profesional GPUs with large VRAM capacity such as the RTX PRO 6000 may be able to run multiple concurrent sessions, especially for workloads running FP8 or FP4 models. This can showcase how these GPUs perform when utilized in a environment as a shared resource.
-
-***Override File:***
-> An override file is a json file which can be used to override spcific values within an existing workflow benchmark file.  For example an override file can change the number of steps utilized or modifiy the output resolution, without having to create a new benchmark workflow package. OVerride files are covered in a later section of this readme.
-
-***Extra Args:*** 
-> The Extra Args option can be used to pass additional arguments which would normally be passed to ComfyUI to change it's default behavior. Some examples are:  --lowvram or --force-cpu
-
-***Minimal Extraction:*** (Deprecated - Automatically handled by framework)
-> When running a benchmark workflow .zip, all of the required models, and nodes will be extracted and installed into the target ComfyUI installation. If a benchmark workflow has previously been executed and the benchmarking files extracted and installed, additional runs of the same benchmark package use Winimal Extraction to avoid unnecessarily extracting and installing the large model files, and only extracting the smaller benchmark workflow files. **SHOULD NOT BE USED ON THE INITIAL RUN OF A BENCHMARK PACKAGE**.
-
-***Debug Warmup:***
-> Used to provide additional debugging output during warmup runs.
-
-***Skip Cleanup:***
-> A debugging option to skip normal cleanup steps
-
-***Use Main Workflow for Warmup:***
-> Some workflows may use a different warmup workflow then used for the main benchmarking workflow. For certain workflows like video generation this allow the benchmark to still preload the model files, but not require a full video generation by reducing the number of steps or frames generated in the warmup. However, it may be desired to run the warmup with the same workflow as the main. (ie. it may desirable to understand the performance differences between first run and second run to understand model loading impact). 
-
-##CLI Mode
-The benchmarking framework can also be run using command line options
-```
-python run_comfyui_benchmark_framework.py [options]
+```bash
+python ModularInstaller.py --gui
 ```
 
-Sample command (assumes a ComfyUI portable installation with the comfyui-benchmarking-framework folder existing in the ComfyUI folder and the ComfyUI folder is the current working directory):
-```
-..\python_embeded\python .\comfyui-benchmark-framework\run_comfyui_benchmark_framework.py -c ..\ComfyUI -w c:\workflows\wan_2.2_i2v_14b_640x640x81x20s.zip -r -l
+The GUI provides:
+- Visual file selection for manifest and ComfyUI path
+- Checkbox options for installation settings
+- Real-time progress display
+- Error handling with clear messages
+
+### CLI Mode - Auto-Install (Windows Only)
+The installer can automatically download and set up ComfyUI portable:
+
+```bash
+# ComfyUI will be installed to ~/ComfyUI_BP automatically
+python ModularInstaller.py -m manifest.json
 ```
 
-Another sample with overrides and multiple instances:
+The installer will:
+1. Check if ComfyUI exists at `~/ComfyUI_BP`
+2. If not found, prompt to download ComfyUI portable (~2GB download)
+3. Extract to `~/ComfyUI_BP`
+4. Prompt to install Blender 4.5 LTS (used for 3D workflows)
+5. Use embedded Python for all package installations
+
+### Manual ComfyUI Path
+If you have ComfyUI installed elsewhere:
+
+```bash
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json
 ```
-..\python_embeded\python .\comfyui-benchmark-framework\run_comfyui_benchmark_framework.py -c ..\ComfyUI -w c:\workflows\flux_workflow.zip -n 2 -g 5 -o overrides.json -l logs/ -p 8190 --extra_args --cpu
+
+### With ZIP Package
+```bash
+python ModularInstaller.py -m package.zip
+```
+
+### Preview Before Installing
+```bash
+python ModularInstaller.py -m manifest.json --list-contents
+python ModularInstaller.py -m manifest.json --dry-run
 ```
 
 ## Command Line Arguments
-The ComfyUI path (`-c`) and workflow path (`-w`) are required. All other arguments are optional; defaults are used if omitted. Below is a detailed explanation of key arguments, including their purpose, usage, and examples.
 
-- **`-h, --help`**
-  - **Description**: Displays the help message with all available arguments and their descriptions, then exits.
-  - **Usage**: Use to quickly check available options without running the script.
-  - **Example**: `python run_comfyui_benchmark_framework.py --help`
+### Required Arguments
+- **`-m, --manifest PATH`** - Path to manifest.json/yaml file or ZIP package
 
-- **`-c, --comfy_path`** (Required)
-  - **Description**: Specifies the path to the ComfyUI installation directory. This must point to the folder containing the ComfyUI executable (`main.py`) and subdirectories like `custom_nodes`, `models`, and `user`.
-  - **Usage**: Provide the absolute or relative path to the ComfyUI directory.
-  - **Example**: `-c ./ComfyUI` or `-c /path/to/ComfyUI`
+### Optional Arguments
 
-- **`-w, --workflow_path`** (Required)
-  - **Description**: Specifies the path to the workflow file or package. Can be a `.json` workflow file, a `.zip` benchmark package, or a directory containing `workflow.json` (and optionally `warmup.json`).
-  - **Usage**: Ensure the path points to a valid file or directory. For ZIP files, the package must contain `workflow.json` at the root.
-  - **Example**: `-w workflow.json`, `-w workflows/package.zip`, `-w workflows/`
+**Installation Options:**
+- **`-c, --comfy_path PATH`** - Path to ComfyUI installation (default: auto-install to ~/ComfyUI_BP/ComfyUI)
+- **`--install-path PATH`** - Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)
+- **`--no-auto-install`** - Disable automatic ComfyUI installation if not found
+- **`--skip-blender`** - Skip Blender 4.5 LTS installation (Windows only)
+- **`--gui`** - Launch graphical installer interface
 
-- **`-g, --generations`** (Default: 1)
-  - **Description**: Specifies the number of generations (image or video outputs) per ComfyUI instance. For image workflows, this is typically >1; for video workflows, 1 is common due to longer processing times.
-  - **Usage**: Provide an integer value. Can be overridden by `baseconfig.json` with `-r`.
-  - **Example**: `-g 5` (runs 5 generations per instance)
+**Download Options:**
+- **`-f, --force`** - Force re-download/installation of all items
+- **`--required-only`** - Only install items marked as required
+- **`--no-verify`** - Skip checksum verification
+- **`--sequential`** - Disable parallel downloads
+- **`--workers N`** - Number of parallel workers (default: 4)
+- **`--no-resume`** - Disable resume capability
 
-- **`-e, --extract_minimal`**
-  - **Description**: When set, extracts only JSON files (`workflow.json`, `warmup.json`, `baseconfig.json`) from ZIP packages, assuming models and assets are already installed. Useful for repeated runs to save disk space and time.
-  - **Usage**: Use on subsequent runs after the first full extraction. Requires prior installation of models/assets.
-  - **Example**: `-e` (extracts only JSON files from the ZIP)
+**Utility Options:**
+- **`-l, --log [FILE]`** - Enable logging to file (auto-generated name if not specified)
+- **`-t, --temp_path PATH`** - Alternate temporary directory
+- **`--dry-run`** - Preview actions without downloading
+- **`--list-contents`** - List manifest items without installing
+- **`--cleanup`** - Clean up partial download files and exit
 
-- **`-r, --run_default`**
-  - **Description**: Uses default `num_instances` and `generations` values from `baseconfig.json` (if present) instead of command-line values. Useful for running benchmarks with predefined settings.
-  - **Usage**: Ensure `baseconfig.json` exists in the ComfyUI directory or extracted ZIP.
-  - **Example**: `-r` (uses values from `baseconfig.json`)
+## Manifest Format
 
-- **`-o, --override`**
-  - **Description**: Specifies a JSON file containing override parameters to modify workflow node inputs or bypass nodes. Overrides allow dynamic adjustment of workflow settings (e.g., changing `steps` in a KSampler node) without editing the original JSON file. The override file can target specific nodes or multiple nodes of the same type, and supports bypassing nodes to disable their execution.
-  - **Purpose**: Enables flexible customization of workflows for testing different configurations (e.g., varying sampling steps, CFG scale, or enabling/disabling nodes) without modifying the source workflow.
-  - **Override File Structure**: The file must be a JSON object with an `"overrides"` key mapping to a dictionary of override entries. Each entry has:
-    - `override_item`: The node input field to modify (e.g., `steps`, `cfg`, `bypass`).
-    - `override_value`: The new value for the field.
-    - `restrict` (optional): A dictionary to filter nodes by specific attributes (e.g., `id`, `_meta.title`, or other node properties).
-  - **Node Specification Logic**:
-    - Without `restrict`, the override applies to all nodes with the specified `override_item` in their `inputs`.
-    - With `restrict`, the override applies only to nodes matching all specified criteria (e.g., `id: "3"` or `_meta.title: "KSampler1"`).
-    - To target a single node, use `restrict` with unique identifiers like `id` or `_meta.title`.
-    - To target multiple nodes, omit `restrict` or use `restrict` with a common attribute (e.g., `class_type: "KSampler"`).
-  - **Bypassing Nodes**: Set `override_item: "bypass"` and `override_value: true` to disable a node, or `override_value: false` to re-enable a bypassed node. Bypassing skips a node’s execution in the workflow.
-  - **Examples**:
-    - **Change Steps for All KSampler Nodes**:
-      ```json
-      {
-        "overrides": {
-          "ksampler_steps": {
-            "override_item": "steps",
-            "override_value": 30
-          }
-        }
-      }
-      ```
-      - Applies `steps: 30` to all KSampler nodes’ `inputs.steps`.
-    - **Change Steps for a Specific Node by ID**:
-      ```json
-      {
-        "overrides": {
-          "ksampler_node_3_steps": {
-            "override_item": "steps",
-            "override_value": 25,
-            "restrict": {"id": "3"}
-          }
-        }
-      }
-      ```
-      - Sets `steps: 25` only for the node with ID `"3"`.
-    - **Change Steps for a Specific Node by Title**:
-      ```json
-      {
-        "overrides": {
-          "ksampler1_steps": {
-            "override_item": "steps",
-            "override_value": 40,
-            "restrict": {"_meta.title": "KSampler1"}
-          }
-        }
-      }
-      ```
-      - Sets `steps: 40` only for the node with `_meta.title: "KSampler1"`.
-    - **Bypass a Specific Node**:
-      ```json
-      {
-        "overrides": {
-          "bypass_ksampler": {
-            "override_item": "bypass",
-            "override_value": true,
-            "restrict": {"_meta.title": "KSampler1"}
-          }
-        }
-      }
-      ```
-      - Disables the node titled `"KSampler1"`.
-    - **Change Multiple Nodes of the Same Type**:
-      ```json
-      {
-        "overrides": {
-          "ksampler_cfg": {
-            "override_item": "cfg",
-            "override_value": 7.5,
-            "restrict": {"class_type": "KSampler"}
-          }
-        }
-      }
-      ```
-      - Sets `cfg: 7.5` for all KSampler nodes.
-    - **Override Multiple Different Nodes (Complex Example)**:
-      ```json
-      {
-        "overrides": {
-          "ksampler_steps_all": {
-            "override_item": "steps",
-            "override_value": 10,
-            "restrict": {"class_type": "KSamplerAdvanced"}
-          },
-          "ksampler1_end_at_step": {
-            "override_item": "end_at_step",
-            "override_value": 5,
-            "restrict": {"id": "86"}
-          },
-          "ksampler2_start_at_step": {
-            "override_item": "start_at_step",
-            "override_value": 5,
-            "restrict": {"id": "85"}
-          },
-          "ksampler2_end_at_step": {
-            "override_item": "end_at_step",
-            "override_value": 10,
-            "restrict": {"id": "85"}
-          },
-          "bypass_lora_all": {
-            "override_item": "bypass",
-            "override_value": true,
-            "restrict": {"class_type": "LoraLoaderModelOnly"}
-          },
-          "bypass_sampling_all": {
-            "override_item": "bypass",
-            "override_value": true,
-            "restrict": {"class_type": "ModelSamplingSD3"}
-          }
-        }
-      }
-      ```
-      - Applies steps: 10 to all KSamplerAdvanced nodes.
-      - Sets end_at_step: 5 for the first KSamplerAdvanced (ID "86").
-      - Sets start_at_step: 5 and end_at_step: 10 for the second KSamplerAdvanced (ID "85").
-      - Bypasses all LoraLoaderModelOnly nodes (disables LoRA loading).
-      - Bypasses all ModelSamplingSD3 nodes (disables SD3 sampling adjustments).
-  - **Usage**: Provide the path to the override JSON file. The script logs applied overrides in the output and log file.
-  - **Example**: `-o overrides.json` (applies overrides from `overrides.json`)
+The manifest is a JSON or YAML file that declares what to install.
 
-- **`-l, --log`**
-  - **Description**: Enables logging of console output to a file. If no path is provided, the log file is named `<workflow_basename>_<yymmdd_epochtime>.txt` (e.g., `flux.1_krea_fp8_1024x1024x20_251024_1755227444.txt`). If a path is provided, it uses the file directly (if a file) or appends the timestamped name to the directory.
-  - **Usage**: Use `-l` alone for default naming or specify a file/directory path.
-  - **Example**: `-l` or `-l logs/` or `-l output.log`
+### Basic Structure
 
-- **`-n, --num_instances`** (Default: 1)
-  - **Description**: Specifies the number of concurrent ComfyUI instances to run. Each instance runs on a separate port, starting from the base port (`-p`). Useful for multi-GPU setups or stress testing.
-  - **Usage**: Set to >1 for concurrent execution. Ensure sufficient system resources (e.g., GPU memory).
-  - **Example**: `-n 2` (runs two instances on ports 8188 and 8189 by default)
-
-- **`-t, --temp_path`**
-  - **Description**: Specifies an alternate parent directory for temporary files extracted from ZIP packages. By default, temporary files are stored in `<comfy_path>/temp`. This is useful when disk space is limited on the drive where ComfyUI is installed or to organize temporary files elsewhere.
-  - **Usage**: Provide a directory path where the script can create a temporary folder (named `temp_<uuid>`). The directory must be writable. Temporary files are cleaned up automatically after the run unless interrupted abnormally.
-  - **Example**: `-t /mnt/external/temp` (extracts ZIP contents to `/mnt/external/temp/temp_<uuid>`)
-  - **Note**: Ensure the specified path has sufficient space for extracted models and assets, especially for large packages without `-e`.
-
-- **`-p, --port`** (Default: 8188)
-  - **Description**: Specifies the starting base port for ComfyUI instances. Each instance uses a sequential port (e.g., `-n 3` with `-p 8190` uses ports 8190, 8191, 8192). If a port is already in use by a running ComfyUI instance (e.g., a desktop ComfyUI session), the script reuses it instead of launching a new process.
-  - **Purpose**: Allows benchmarking on an actively running ComfyUI instance, which is particularly useful when testing with the ComfyUI desktop version (e.g., running via GUI). This avoids launching redundant processes and leverages existing server instances.
-  - **Usage**: Set to match the port of a running ComfyUI instance (check the ComfyUI GUI or server logs for the port). Ensure ports are free or correctly identify running instances to avoid conflicts.
-  - **Example**: `-p 8190` (starts instances at port 8190; reuses if already running)
-  - **Note**: If using a running desktop ComfyUI instance, ensure it’s in API mode (listening on `127.0.0.1:<port>`). Use `-n 1` to target a single running instance.
-
-- **`-u, --use_main_workflow_only`**
-  - **Description**: Forces the warmup phase to use `workflow.json` even if `warmup.json` exists in the package or directory. By default, the script uses `warmup.json` for warmup if available.
-  - **Usage**: Use when you want consistent behavior between warmup and main generations or if `warmup.json` is unsuitable.
-  - **Example**: `-u` (uses `workflow.json` for both warmup and main generations)
-
-- ** `--extra_args`**
-  - **Description**: Passes additional command-line arguments to ComfyUI’s `main.py` when launching new instances. Useful for customizing ComfyUI behavior (e.g., forcing CPU execution, specifying GPUs, or enabling debug options).
-  - **Usage**: Provide arguments as a space-separated list after `--extra_args`. This must be the last argument in the command, as all subsequent tokens are treated as part of `extra_args`. Arguments are passed directly to `main.py` for each instance launched (ignored for reused instances).
-  - **Requirements**: Arguments must be valid for ComfyUI’s `main.py`. Common options include `--cpu`, `--num_gpus`, `--force-fp16`, or `--disable-xformers`. Check ComfyUI documentation for supported options.
-  - **Examples**:
-    - `--extra_args --cpu` (forces CPU execution for all instances)
-    - `--extra_args --num_gpus 2 --force-fp16` (uses 2 GPUs with FP16 precision)
-    - `--extra_args --disable-xformers` (disables xformers optimizations)
-  - **Recommendation**: Always place `--extra_args` last to avoid parsing issues, as it consumes all remaining arguments.
-  - **Note**: Does not affect existing ComfyUI instances reused via `-p`.
-
-## Benchmark Package Format
-The benchmark package is a zipped archive containing all necessary model files, assets, and workflows. Files listed below must be at the root level (no extra folders in the ZIP).
-
-<style>
-    /* Style all table cells, including headers, with minimal padding */
-    .minimal-padding-table th, 
-    .minimal-padding-table td {
-        border: 1px solid #ddd;
-        padding: 4px 8px; /* 4px for top/bottom, 8px for left/right */
-        text-align: left;
+```json
+{
+  "package": {
+    "name": "My ComfyUI Setup",
+    "version": "1.0.0",
+    "description": "Complete setup for image generation"
+  },
+  "metadata": {
+    "total_size_mb": 1500,
+    "estimated_time": "5-10 minutes",
+    "tags": ["sdxl", "flux", "video"],
+    "details": "Includes SDXL models and custom nodes"
+  },
+  "items": [
+    {
+      "name": "SDXL Base Model",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "file": "sd_xl_base_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_base_1.0.safetensors",
+      "sha256": "abc123...",
+      "size_mb": 6938,
+      "required": true
     }
-    
-    /* Remove default margins from heading tags within table headers */
-    .minimal-padding-table th h3 {
-        margin: 0;
+  ]
+}
+```
+
+### Item Types
+
+Each item in the `items` array represents something to install:
+
+| Type | Description |
+|------|-------------|
+| `model` | Model files (checkpoints, LoRAs, VAE, etc.) |
+| `custom_node` | ComfyUI custom nodes (typically Git repositories) |
+| `file` | Generic file to download |
+| `directory` | Directory to download/clone |
+| `pip_package` | Python package to install via pip |
+| `config` | Configuration file |
+
+### Source Types
+
+#### 1. HuggingFace Hub
+
+Download files from HuggingFace repositories:
+
+```json
+{
+  "name": "FLUX.1 Dev Model",
+  "type": "model",
+  "source": "huggingface",
+  "repo": "black-forest-labs/FLUX.1-dev",
+  "file": "flux1-dev.safetensors",
+  "path": "models/checkpoints/flux1-dev.safetensors",
+  "sha256": "optional-checksum",
+  "size_mb": 23800,
+  "required": true,
+  "gated": true
+}
+```
+
+**Fields:**
+- `repo` - HuggingFace repository ID (e.g., "username/repo-name")
+- `file` - Filename in the repository
+- `path` - Destination path relative to ComfyUI directory
+- `remote_path` - (Optional) If file is in a subdirectory, full path like "repo/tree/main/subfolder"
+- `gated` - (Optional) Set to `true` if model requires license acceptance
+- `sha256` or `sha` - (Optional) SHA256 checksum for verification
+
+#### 2. Git Repository
+
+Clone Git repositories (perfect for custom nodes):
+
+```json
+{
+  "name": "ComfyUI Manager",
+  "type": "custom_node",
+  "source": "git",
+  "url": "https://github.com/ltdrdata/ComfyUI-Manager.git",
+  "path": "custom_nodes/ComfyUI-Manager",
+  "ref": "main",
+  "install_requirements": true,
+  "required": true
+}
+```
+
+**Fields:**
+- `url` - Git repository URL
+- `path` - Destination path relative to ComfyUI directory
+- `ref` - (Optional) Branch, tag, or commit (default: "main")
+- `install_requirements` - (Optional) Run `pip install -r requirements.txt` after cloning
+
+#### 3. Direct URL
+
+Download files from direct URLs:
+
+```json
+{
+  "name": "Custom VAE",
+  "type": "model",
+  "source": "url",
+  "url": "https://example.com/models/vae.safetensors",
+  "path": "models/vae/vae.safetensors",
+  "sha256": "optional-checksum",
+  "executable": false
+}
+```
+
+**Fields:**
+- `url` - Direct download URL
+- `path` - Destination path relative to ComfyUI directory
+- `executable` - (Optional) Make file executable after download (Linux/Mac)
+- `sha256` or `sha` - (Optional) SHA256 checksum for verification
+
+#### 4. Local File
+
+Copy files from local filesystem:
+
+```json
+{
+  "name": "Custom Config",
+  "type": "config",
+  "source": "local",
+  "source_path": "/path/to/local/config.yaml",
+  "path": "user/config.yaml"
+}
+```
+
+**Fields:**
+- `source_path` - Path to source file or directory
+- `path` - Destination path relative to ComfyUI directory
+
+#### 5. Bundled in ZIP
+
+Files included in the ZIP package (extracted automatically):
+
+```json
+{
+  "name": "Workflow Files",
+  "type": "file",
+  "source": "bundled",
+  "path": "user/workflows/"
+}
+```
+
+**Note:** Bundled files are extracted from the ZIP's `ComfyUI/` folder structure.
+
+#### 6. Pip Package
+
+Install Python packages via pip:
+
+```json
+{
+  "name": "OpenCV",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "opencv-python",
+  "version": "4.8.0.74",
+  "required": false
+}
+```
+
+**Fields:**
+- `package` - Package name on PyPI
+- `version` - (Optional) Specific version to install
+
+### Common Fields
+
+All items support these fields:
+
+- **`name`** (required) - Human-readable name
+- **`type`** (required) - Item type (see table above)
+- **`source`** (required) - Source type (see source types above)
+- **`path`** (usually required) - Relative path for installation (see `path_base` below)
+- **`path_base`** (optional) - Base path type for installation (default: `comfyui`)
+  - `comfyui` - Install relative to ComfyUI directory (default)
+  - `home` - Install relative to user home directory
+  - `temp` - Install to temporary directory
+  - `appdata` - Install to application data directory
+  - `absolute` - Use absolute path (path must be absolute)
+- **`required`** (optional) - If `true`, installation fails if this item fails
+- **`size_mb`** (optional) - Size in megabytes (for display purposes)
+
+#### Path Base Examples
+
+```json
+{
+  "name": "SDXL Model",
+  "path": "models/checkpoints/sdxl.safetensors",
+  "path_base": "comfyui"  // Installs to ComfyUI/models/checkpoints/
+},
+{
+  "name": "User Config",
+  "path": ".comfyui/settings.json",
+  "path_base": "home"  // Installs to ~/. comfyui/settings.json
+},
+{
+  "name": "Shared Model",
+  "path": "/opt/models/shared/model.safetensors",
+  "path_base": "absolute"  // Installs to exact path
+}
+```
+
+## Complete Example Manifest
+
+```json
+{
+  "package": {
+    "name": "SDXL Complete Setup",
+    "version": "1.0.0",
+    "description": "Full SDXL setup with custom nodes"
+  },
+  "metadata": {
+    "total_size_mb": 15000,
+    "estimated_time": "10-15 minutes",
+    "tags": ["sdxl", "upscaling"],
+    "details": "Includes SDXL base, refiner, VAE, and essential custom nodes"
+  },
+  "items": [
+    {
+      "name": "SDXL Base 1.0",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-base-1.0",
+      "file": "sd_xl_base_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_base_1.0.safetensors",
+      "size_mb": 6938,
+      "required": true
+    },
+    {
+      "name": "SDXL Refiner 1.0",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/stable-diffusion-xl-refiner-1.0",
+      "file": "sd_xl_refiner_1.0.safetensors",
+      "path": "models/checkpoints/sd_xl_refiner_1.0.safetensors",
+      "size_mb": 6075,
+      "required": false
+    },
+    {
+      "name": "SDXL VAE",
+      "type": "model",
+      "source": "huggingface",
+      "repo": "stabilityai/sdxl-vae",
+      "file": "sdxl_vae.safetensors",
+      "path": "models/vae/sdxl_vae.safetensors",
+      "size_mb": 335,
+      "required": true
+    },
+    {
+      "name": "ComfyUI Manager",
+      "type": "custom_node",
+      "source": "git",
+      "url": "https://github.com/ltdrdata/ComfyUI-Manager.git",
+      "path": "custom_nodes/ComfyUI-Manager",
+      "ref": "main",
+      "install_requirements": true,
+      "required": true
+    },
+    {
+      "name": "ControlNet Preprocessors",
+      "type": "custom_node",
+      "source": "git",
+      "url": "https://github.com/Fannovel16/comfyui_controlnet_aux.git",
+      "path": "custom_nodes/comfyui_controlnet_aux",
+      "install_requirements": true,
+      "required": false
+    },
+    {
+      "name": "NumPy",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "numpy",
+      "version": "1.24.3",
+      "required": false
     }
-
-    /* Style the header rows with the background color */
-    .minimal-padding-table .header-row {
-        background-color: #c7ba5b;
-    }
-</style>
-
-<table class="minimal-padding-table" style="border-collapse: collapse; width: 100%; margin: 20px 0;">
-  <thead>
-    <tr class="header-row">
-      <th><h3>File</h3></th>
-      <th><h3>Description</h3></th>
-    </tr>
-  </thead>
-  <tbody>
-    <tr>
-      <td><strong>workflow.json</strong></td>
-      <td><strong>Required</strong>. The main ComfyUI workflow JSON file (exported via API format).</td>
-    </tr>
-    <tr>
-      <td><strong>warmup.json</strong></td>
-      <td><strong>Optional</strong>. A simplified workflow for warmup (e.g., single frame for video tasks). Uses <code>workflow.json</code> if not provided. Ignored if <code>-u</code> is set.</td>
-    </tr>
-    <tr>
-      <td><strong>baseconfig.json</strong></td>
-      <td><strong>Optional</strong>. JSON with default <code>NUM_INSTANCES</code> and <code>GENERATIONS</code> for <code>-r</code>. Example: <code>{"NUM_INSTANCES": 1, "GENERATIONS": 1}</code>.</td>
-    </tr>
-    <tr>
-      <td><strong>pre.py</strong></td>
-      <td><strong>Optional</strong>. Python script run before copying models/assets (e.g., create directories). Skipped with <code>-e</code>.</td>
-    </tr>
-    <tr>
-      <td><strong>post.py</strong></td>
-      <td><strong>Optional</strong>. Python script run after copying models/assets (e.g., install requirements). Skipped with <code>-e</code>.</td>
-    </tr>
-  </tbody>
-
-  <!-- Second table section with its own header and body -->
-  <thead>
-    <tr class="header-row">
-      <th><h3>Folder</h3></th>
-      <th><h3>Description</h3></th>
-    </tr>
-  </thead>
-  <tbody>   
-    <tr>
-      <td><strong>ComfyUI</strong></td>
-      <td><strong>Required Folder</strong>. Contains subfolders/files to install into the local ComfyUI (e.g., <code>models/diffusion_models/</code>, <code>custom_nodes/</code>).</td>
-    </tr>
-  </tbody>
-
-  <!-- Final header section for "Additional Notes" -->
-  <thead>
-    <tr class="header-row">
-      <th colspan="2"><h3>Additional Notes</h3></th>
-    </tr>
-  </thead> 
-  <tbody>
-    <tr>
-      <td colspan="2"><strong>Models, LoRAs, custom nodes, and inputs</strong> should be placed into their respective folders within the <code>ComfyUI</code> folder in the zipped package to mimic the installed location in ComfyUI.</td>
-    </tr>
-    <tr>
-      <td colspan="2"><strong>Images, videos, and similar assets</strong> should be set up in the workflow to reference these assets from the <code>inputs</code> folder; include any required assets in the package.</td>
-    </tr>
-  </tbody>
-</table>
-
-Example package structure (unzipped view):
-```
-- baseconfig.json
-- warmup.json
-- workflow.json
-- pre.py
-- post.py
-- ComfyUI/
-  - models/
-    - diffusion_models/
-      - model.safetensors
-    - vae/
-      - vae.safetensors
-  - custom_nodes/
-    - custom_node_dir/
-      - requirements.txt
-  - input/
-    - input.jpg
+  ]
+}
 ```
 
-Zip the contents directly (no top-level folder in the ZIP).
+## Package Structure (ZIP)
 
-## Output and Metrics
-The script outputs progress (queuing/completion) and a results summary:
+When distributing as a ZIP package, use this structure:
+
 ```
-####_RESULTS_SUMMARY_####
-
-Total time to generate X images: Y.YY seconds
-Number of images per minute: Z.ZZ
-Average time (secs) per image: A.AA
-Total Execution Time (main generations): B.BB seconds
-Average Execution Time Per Image (main generations): C.CC seconds
-
-Applied Overrides:
-  Main Workflow Overrides:
-    - override_key: Set override_item to override_value in nodes [node_id (node_title)]
+package.zip
+├── manifest.json          # Required: Installation manifest
+└── ComfyUI/              # Optional: Bundled files
+    ├── models/
+    │   └── ...
+    ├── custom_nodes/
+    │   └── ...
+    └── user/
+        └── ...
 ```
-- If `comfyui-benchmark` is installed, it generates JSON files like `flux.1_krea_fp8_1024x1024x20_YYYYMMDD_HHMMSS_RUN_N.M.json` (N=generation, M=instance).
-- Logs include detailed execution times, errors, and applied overrides.
+
+**Important:**
+- `manifest.json` must be at the root of the ZIP
+- Files in `ComfyUI/` folder are extracted directly to your ComfyUI installation
+- Reference bundled files in manifest with `"source": "bundled"`
+
+## Usage Examples
+
+### Install from Manifest File
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m sdxl_setup.json
+```
+
+### Install from ZIP Package
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m complete_setup.zip
+```
+
+### Force Reinstall Everything
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --force
+```
+
+### Install Only Required Items
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --required-only
+```
+
+### Preview Before Installing
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --list-contents
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --dry-run
+```
+
+### Install with Logging
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json -l install.log
+```
+
+### Sequential Downloads (Slower but More Stable)
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --sequential
+```
+
+### Clean Up Partial Downloads
+```bash
+python ModularInstaller.py -c C:/ComfyUI --cleanup
+```
+
+## Advanced Features
+
+### Gated Models (HuggingFace)
+
+Some models (like FLUX) require license acceptance and authentication. The installer **automatically prompts** for a token when gated models are detected.
+
+**Automatic Token Prompt:**
+When the installer detects gated models in the manifest and no `HF_TOKEN` is set, it will:
+- **GUI Mode**: Show a password-protected dialog with instructions
+- **CLI Mode**: Prompt in the terminal for token entry
+
+**Manual Token Setup (Alternative):**
+You can also set the token as an environment variable to skip the prompt:
+
+```bash
+# Windows (Command Prompt)
+set HF_TOKEN=your_token_here
+
+# Windows (PowerShell)
+$env:HF_TOKEN="your_token_here"
+
+# Linux/Mac
+export HF_TOKEN=your_token_here
+```
+
+**To get a token:**
+1. Visit https://huggingface.co/settings/tokens
+2. Create a new token with **Read** permission
+3. Accept the license for gated models on their HuggingFace pages
+4. Enter the token when prompted (or set `HF_TOKEN` environment variable)
+
+**Marking models as gated in manifest:**
+```json
+{
+  "name": "FLUX.1 Dev",
+  "type": "model",
+  "source": "huggingface",
+  "repo": "black-forest-labs/FLUX.1-dev",
+  "file": "flux1-dev.safetensors",
+  "path": "models/unet/flux1-dev.safetensors",
+  "path_base": "comfyui",
+  "gated": true,
+  "required": true
+}
+```
+
+The `"gated": true` flag tells the installer that this model requires authentication.
+
+### Resume Interrupted Downloads
+
+The installer automatically resumes interrupted downloads. If a download fails:
+
+1. Fix the issue (network, disk space, etc.)
+2. Run the same command again
+3. Downloads resume from where they stopped
+
+To disable resume functionality:
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-resume
+```
+
+### ComfyUI Auto-Installation (Windows)
+
+The installer can automatically download and set up ComfyUI portable on Windows:
+
+**Automatic Installation:**
+```bash
+# Will auto-install to ~/ComfyUI_BP if not found
+python ModularInstaller.py -m manifest.json
+```
+
+**Custom Installation Path:**
+```bash
+# Install to custom location
+python ModularInstaller.py --install-path C:/MyComfyUI -m manifest.json
+```
+
+**Disable Auto-Install:**
+```bash
+# Require manual ComfyUI installation
+python ModularInstaller.py --no-auto-install -m manifest.json
+```
+
+**How it works:**
+1. Checks for ComfyUI at `~/ComfyUI_BP` (or custom path)
+2. If found, prompts to continue with existing installation or cancel
+3. If not found, prompts to download ComfyUI portable (~2GB)
+4. Downloads from GitHub releases (latest version)
+5. Extracts to target location using py7zr
+6. Sets persistent `COMFYUI_BASE` environment variable
+7. Automatically detects and uses embedded Python for all installations
+
+**Environment Variable:**
+After installation, the installer sets a persistent `COMFYUI_BASE` environment variable:
+- **Value**: The base installation path (e.g., `C:\Users\YourName\ComfyUI_BP`)
+- **Purpose**: Other tools and scripts can reference this location
+- **Scope**: User-level (system-level requires admin/root privileges)
+- **Persistence**:
+  - Windows: Set via `setx` command
+  - Linux/Mac: Added to `.bashrc`, `.zshrc`, or `.profile`
+
+You can reference it in your own scripts:
+```bash
+# Windows
+echo %COMFYUI_BASE%
+
+# Linux/Mac
+echo $COMFYUI_BASE
+```
+
+**Note:** Auto-installation is currently Windows-only. On Linux/Mac, you must:
+- Install ComfyUI manually
+- Specify path with `-c /path/to/ComfyUI`
+
+### Blender Installation (Windows)
+
+The installer can automatically install Blender 4.5 LTS for 3D object generation workflows:
+
+**Automatic Installation:**
+```bash
+# Blender will be prompted during installation
+python ModularInstaller.py -m manifest.json
+```
+
+**Skip Blender:**
+```bash
+# Skip Blender installation
+python ModularInstaller.py -m manifest.json --skip-blender
+```
+
+**How it works:**
+1. Checks if Blender is already installed via winget
+2. If not found, prompts user to install
+3. Uses `winget` to silently install Blender 4.5 LTS
+4. Installation ID: `BlenderFoundation.Blender.LTS.4.5`
+
+**Requirements:**
+- Windows 10/11 with winget (App Installer from Microsoft Store)
+- Automatically bypassed on Linux/Mac
+- Uses silent installation (no user interaction needed)
+
+**Manual Installation:**
+If you prefer to install Blender manually:
+```bash
+winget install --id BlenderFoundation.Blender.LTS.4.5
+```
+
+### Embedded Python Support
+
+When using ComfyUI portable (auto-installed or manual), the installer automatically:
+- Detects the embedded Python at `ComfyUI_BP/python_embeded/python.exe`
+- Uses it for all pip package installations
+- Uses it for custom node `requirements.txt` installations
+
+This ensures packages are installed into ComfyUI's isolated environment, not your system Python.
+
+**Manual Override:**
+If you want to use system Python instead:
+```bash
+python ModularInstaller.py -c /path/to/ComfyUI -m manifest.json
+# Specifying -c manually disables embedded Python detection
+```
+
+### Parallel Downloads
+
+By default, the installer downloads 4 items simultaneously. Adjust with `--workers`:
+
+```bash
+# Use 8 parallel workers
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --workers 8
+
+# Disable parallelism
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --sequential
+```
+
+### Checksum Verification
+
+The installer verifies SHA256 checksums for model files when provided. To skip verification:
+
+```bash
+python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-verify
+```
 
 ## Troubleshooting
-- **Server not starting**: Check port conflicts or increase timeout in `check_server_ready`. Use `-p` to match running ComfyUI instances.
-- **Missing models**: Ensure package includes all required files; avoid `-e` on first run.
-- **Overrides not applying**: Verify `overrides.json` format and node identifiers. Check logs for warnings about unmatched nodes.
-- **Keyboard Interrupt**: Partial metrics are calculated and logged.
-- **Custom Nodes**: Required Custom node should have their directories added to the ComfyUI/custom_nodes folder within the zipped benchmark package.  Custom nodes which require addiition setup can include any setup commands/processes via an included `post.py` or manually; errors may occur if dependencies are missing.
-- **Disk Space Issues**: Use `-t` to specify an alternate temporary directory with sufficient space.
 
-For issues, check the log file or run without `-l` for console output.
+### "Manifest not found in ZIP"
+- Ensure `manifest.json` is at the root of the ZIP file
+- Check if it's named `manifest.json` (not `manifest.txt` or inside a folder)
+
+### "Checksum mismatch"
+- File may be corrupted
+- Use `--force` to re-download
+- Verify the SHA256 in your manifest is correct
+
+### "Gated model" error
+- Model requires license acceptance on HuggingFace
+- Accept license and set `HF_TOKEN` environment variable
+- Mark item with `"gated": true` in manifest
+
+### "Git clone failed"
+- Check internet connection
+- Verify Git is installed and in PATH
+- Try cloning the repository manually to test
+
+### Custom nodes not loading
+- Restart ComfyUI after installing custom nodes
+- Check `ComfyUI/custom_nodes/` directory for errors
+- Review installation logs for dependency errors
+
+### Disk space issues
+- Use `-t` to specify alternate temp directory
+- Check available space before installing
+- Clean up old installations: `--cleanup`
+
+## Creating Your Own Manifests
+
+1. **Start with package metadata:**
+   ```json
+   {
+     "package": {
+       "name": "My Setup",
+       "version": "1.0.0",
+       "description": "Description here"
+     },
+     "items": []
+   }
+   ```
+
+2. **Add items for each resource:**
+   - Models from HuggingFace
+   - Custom nodes from Git
+   - Local files or configs
+
+3. **Set required flags appropriately:**
+   - `"required": true` for essential items
+   - `"required": false` for optional enhancements
+
+4. **Include checksums for models:**
+   - Download file first
+   - Calculate SHA256: `sha256sum file.safetensors`
+   - Add to manifest
+
+5. **Test your manifest:**
+   ```bash
+   python ModularInstaller.py -c /path/to/test/ComfyUI -m your_manifest.json --dry-run
+   ```
+
+## Contributing
+
+Contributions are welcome! Please:
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Submit a pull request
+
+## License
+
+[Add your license information here]
+
+## Support
+
+For issues or questions:
+- Open an issue on GitHub
+- Check the troubleshooting section above
+- Review installation logs for detailed error messages
