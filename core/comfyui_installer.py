@@ -16,9 +16,13 @@ class ComfyUIInstaller:
     """Handles ComfyUI portable installation and detection."""
 
     COMFYUI_DOWNLOAD_URL = "https://github.com/comfyanonymous/ComfyUI/releases/latest/download/ComfyUI_windows_portable_nvidia.7z"
+    COMFYUI_GIT_URL = "https://github.com/Comfy-Org/ComfyUI.git"
     DEFAULT_INSTALL_PATH = Path(os.path.expanduser("~")) / "ComfyUI_BP"
+    CONDA_ENV_NAME = "comfyui_bp"
     BLENDER_WINGET_ID = "BlenderFoundation.Blender.LTS.4.5"
     SEVENZIP_STANDALONE_URL = "https://www.7-zip.org/a/7zr.exe"
+    MINICONDA_WINGET_ID = "Anaconda.Miniconda3"
+    MINICONDA_LINUX_URL = "https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
 
     def __init__(self, install_path: Optional[Path] = None, log_file: Optional[Path] = None):
         """
@@ -502,13 +506,437 @@ class ComfyUIInstaller:
             'comfyui_path': self.get_comfyui_path(),
             'python_executable': self.get_python_executable(),
             'is_portable': False,
+            'python_type': 'embedded',
             'platform': sys.platform
         }
 
+        # Check for portable Python
         if info['python_executable']:
             info['is_portable'] = True
+            info['python_type'] = 'embedded'
+        else:
+            # Check for conda environment
+            conda_python = self._get_conda_env_python(self.CONDA_ENV_NAME)
+            if conda_python:
+                info['python_executable'] = conda_python
+                info['python_type'] = 'conda'
+                info['is_portable'] = False
 
         return info
+
+    def check_conda_installed(self) -> Tuple[bool, Optional[Path]]:
+        """
+        Check if conda (miniconda or anaconda) is installed.
+
+        Returns:
+            Tuple of (installed: bool, conda_executable: Optional[Path])
+        """
+        try:
+            # Try to find conda executable
+            result = subprocess.run(
+                ['conda', '--version'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                # Find conda executable path
+                which_cmd = 'where' if platform.system() == "Windows" else 'which'
+                result = subprocess.run(
+                    [which_cmd, 'conda'],
+                    capture_output=True,
+                    text=True,
+                    timeout=10
+                )
+                if result.returncode == 0:
+                    conda_path = Path(result.stdout.strip().split('\n')[0])
+                    self.log(f"✓ Conda found: {conda_path}")
+                    return True, conda_path
+                return True, None
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+        return False, None
+
+    def install_miniconda_windows(self) -> Tuple[bool, str]:
+        """
+        Install Miniconda on Windows using winget.
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        self.log("Installing Miniconda via winget...")
+
+        try:
+            result = subprocess.run(
+                ['winget', 'install', '--id', self.MINICONDA_WINGET_ID, '--source', 'winget', '--silent',
+                 '--accept-package-agreements', '--accept-source-agreements'],
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+
+            if result.returncode == 0 or 'already installed' in result.stdout.lower():
+                self.log("✓ Miniconda installed successfully")
+
+                # Add conda to PATH for current session
+                # Common conda installation paths on Windows
+                possible_conda_paths = [
+                    Path.home() / "miniconda3",
+                    Path.home() / "Miniconda3",
+                    Path("C:/ProgramData/miniconda3"),
+                    Path("C:/ProgramData/Miniconda3"),
+                ]
+
+                for conda_path in possible_conda_paths:
+                    if conda_path.exists():
+                        conda_scripts = conda_path / "Scripts"
+                        if conda_scripts.exists() and str(conda_scripts) not in os.environ['PATH']:
+                            os.environ['PATH'] = str(conda_scripts) + os.pathsep + os.environ['PATH']
+                            os.environ['PATH'] = str(conda_path) + os.pathsep + os.environ['PATH']
+                            self.log(f"  Added conda to PATH: {conda_path}")
+                            break
+
+                return True, "Miniconda installed successfully"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                return False, f"Miniconda installation failed: {error_msg}"
+
+        except subprocess.TimeoutExpired:
+            return False, "Miniconda installation timed out"
+        except FileNotFoundError:
+            return False, "winget not found. Please install App Installer from Microsoft Store"
+        except Exception as e:
+            return False, f"Miniconda installation failed: {e}"
+
+    def install_miniconda_linux(self) -> Tuple[bool, str]:
+        """
+        Install Miniconda on Linux by downloading and running the installer script.
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        self.log("Installing Miniconda for Linux...")
+
+        try:
+            # Download Miniconda installer
+            installer_path = Path("/tmp/miniconda_installer.sh")
+
+            self.log(f"Downloading Miniconda installer from {self.MINICONDA_LINUX_URL}...")
+            response = requests.get(self.MINICONDA_LINUX_URL, stream=True, timeout=60)
+            response.raise_for_status()
+
+            total_size = int(response.headers.get('content-length', 0))
+            with open(installer_path, 'wb') as f:
+                with tqdm(total=total_size, unit='B', unit_scale=True,
+                         desc="Downloading Miniconda", ncols=80) as pbar:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            pbar.update(len(chunk))
+
+            # Make installer executable
+            installer_path.chmod(0o755)
+
+            # Run installer in batch mode
+            miniconda_path = Path.home() / "miniconda3"
+            self.log(f"Installing Miniconda to {miniconda_path}...")
+
+            result = subprocess.run(
+                [str(installer_path), '-b', '-p', str(miniconda_path)],
+                capture_output=True,
+                text=True,
+                timeout=600
+            )
+
+            if result.returncode == 0:
+                self.log("✓ Miniconda installed successfully")
+
+                # Initialize conda for bash/zsh
+                conda_exe = miniconda_path / "bin" / "conda"
+                if conda_exe.exists():
+                    # Run conda init
+                    self.log("Initializing conda for shell...")
+                    subprocess.run(
+                        [str(conda_exe), 'init', 'bash'],
+                        capture_output=True,
+                        timeout=30
+                    )
+                    subprocess.run(
+                        [str(conda_exe), 'init', 'zsh'],
+                        capture_output=True,
+                        timeout=30
+                    )
+
+                    # Add to current session PATH
+                    conda_bin = miniconda_path / "bin"
+                    if str(conda_bin) not in os.environ['PATH']:
+                        os.environ['PATH'] = str(conda_bin) + os.pathsep + os.environ['PATH']
+                        self.log(f"  Added conda to PATH: {conda_bin}")
+
+                # Clean up installer
+                installer_path.unlink()
+
+                return True, "Miniconda installed successfully"
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                return False, f"Miniconda installation failed: {error_msg}"
+
+        except requests.RequestException as e:
+            return False, f"Failed to download Miniconda: {e}"
+        except Exception as e:
+            return False, f"Miniconda installation failed: {e}"
+
+    def ensure_conda_available(self) -> Tuple[bool, str]:
+        """
+        Ensure conda is available, installing it if necessary.
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        # Check if conda is already installed
+        conda_installed, conda_path = self.check_conda_installed()
+
+        if conda_installed:
+            return True, f"Conda is already available at {conda_path}"
+
+        self.log("Conda not found. Installing Miniconda...")
+
+        # Install based on platform
+        if platform.system() == "Windows":
+            return self.install_miniconda_windows()
+        elif platform.system() == "Linux":
+            return self.install_miniconda_linux()
+        elif platform.system() == "Darwin":
+            # macOS support could be added here
+            return False, "Automated Miniconda installation not yet supported on macOS. Please install manually from https://docs.conda.io/en/latest/miniconda.html"
+        else:
+            return False, f"Unsupported platform: {platform.system()}"
+
+    def create_conda_environment(self, env_name: str = None) -> Tuple[bool, str, Optional[Path]]:
+        """
+        Create a conda environment for ComfyUI.
+
+        Args:
+            env_name: Name of the conda environment (default: comfyui_bp)
+
+        Returns:
+            Tuple of (success: bool, message: str, python_path: Optional[Path])
+        """
+        if env_name is None:
+            env_name = self.CONDA_ENV_NAME
+
+        self.log(f"Creating conda environment: {env_name}...")
+
+        try:
+            # Check if environment already exists
+            result = subprocess.run(
+                ['conda', 'env', 'list'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            if env_name in result.stdout:
+                self.log(f"✓ Conda environment '{env_name}' already exists")
+
+                # Get Python path from existing environment
+                python_path = self._get_conda_env_python(env_name)
+                return True, f"Using existing conda environment '{env_name}'", python_path
+
+            # Create new environment with Python 3.11 (good compatibility with ComfyUI)
+            self.log(f"Creating new conda environment with Python 3.11...")
+            result = subprocess.run(
+                ['conda', 'create', '-n', env_name, 'python=3.11', '-y'],
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+
+            if result.returncode == 0:
+                self.log(f"✓ Conda environment '{env_name}' created successfully")
+
+                # Get Python path
+                python_path = self._get_conda_env_python(env_name)
+                if python_path:
+                    self.log(f"  Python executable: {python_path}")
+                    return True, f"Conda environment '{env_name}' created", python_path
+                else:
+                    return False, "Failed to locate Python executable in conda environment", None
+            else:
+                error_msg = result.stderr if result.stderr else result.stdout
+                return False, f"Failed to create conda environment: {error_msg}", None
+
+        except FileNotFoundError:
+            return False, "conda command not found. Please ensure conda is in PATH", None
+        except Exception as e:
+            return False, f"Failed to create conda environment: {e}", None
+
+    def _get_conda_env_python(self, env_name: str) -> Optional[Path]:
+        """
+        Get the Python executable path for a conda environment.
+
+        Args:
+            env_name: Name of the conda environment
+
+        Returns:
+            Path to Python executable, or None if not found
+        """
+        try:
+            # Get conda info
+            result = subprocess.run(
+                ['conda', 'env', 'list'],
+                capture_output=True,
+                text=True,
+                timeout=30
+            )
+
+            # Parse output to find environment path
+            for line in result.stdout.split('\n'):
+                if env_name in line and not line.startswith('#'):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        env_path = Path(parts[-1])
+
+                        # Construct Python path
+                        if platform.system() == "Windows":
+                            python_path = env_path / "python.exe"
+                        else:
+                            python_path = env_path / "bin" / "python"
+
+                        if python_path.exists():
+                            return python_path
+
+            return None
+
+        except Exception:
+            return None
+
+    def install_comfyui_git(self) -> Tuple[bool, str, Optional[Path], str]:
+        """
+        Install ComfyUI from GitHub repository using conda environment.
+
+        Returns:
+            Tuple of (success: bool, message: str, python_path: Optional[Path], python_type: str)
+        """
+        try:
+            # Ensure conda is available
+            self.log("\n" + "=" * 60)
+            self.log("STEP 1: Checking for conda...")
+            self.log("=" * 60)
+
+            conda_success, conda_msg = self.ensure_conda_available()
+            if not conda_success:
+                return False, conda_msg, None, "conda"
+
+            self.log(f"✓ {conda_msg}")
+
+            # Create conda environment
+            self.log("\n" + "=" * 60)
+            self.log("STEP 2: Setting up conda environment...")
+            self.log("=" * 60)
+
+            env_success, env_msg, python_path = self.create_conda_environment()
+            if not env_success:
+                return False, env_msg, None, "conda"
+
+            self.log(f"✓ {env_msg}")
+
+            # Clone ComfyUI repository
+            self.log("\n" + "=" * 60)
+            self.log("STEP 3: Cloning ComfyUI repository...")
+            self.log("=" * 60)
+
+            comfyui_path = self.install_path / "ComfyUI"
+
+            if comfyui_path.exists():
+                self.log(f"ComfyUI directory already exists at {comfyui_path}")
+                self.log("Checking if it's a git repository...")
+
+                if (comfyui_path / ".git").exists():
+                    self.log("✓ Existing git repository found, pulling latest changes...")
+                    result = subprocess.run(
+                        ['git', 'pull'],
+                        cwd=comfyui_path,
+                        capture_output=True,
+                        text=True,
+                        timeout=120
+                    )
+                    if result.returncode == 0:
+                        self.log("✓ Repository updated successfully")
+                    else:
+                        self.log("⚠ Warning: Failed to pull updates, continuing with existing repository", "WARNING")
+                else:
+                    self.log("⚠ Warning: Directory exists but is not a git repository", "WARNING")
+                    self.log("Please remove the directory or choose a different install path", "ERROR")
+                    return False, "ComfyUI directory exists but is not a git repository", python_path, "conda"
+            else:
+                # Create parent directory
+                self.install_path.mkdir(parents=True, exist_ok=True)
+
+                self.log(f"Cloning from {self.COMFYUI_GIT_URL}...")
+                self.log(f"Target: {comfyui_path}")
+
+                result = subprocess.run(
+                    ['git', 'clone', self.COMFYUI_GIT_URL, str(comfyui_path)],
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+
+                if result.returncode == 0:
+                    self.log("✓ ComfyUI cloned successfully")
+                else:
+                    error_msg = result.stderr if result.stderr else result.stdout
+                    return False, f"Failed to clone ComfyUI: {error_msg}", python_path, "conda"
+
+            # Install dependencies
+            self.log("\n" + "=" * 60)
+            self.log("STEP 4: Installing dependencies...")
+            self.log("=" * 60)
+
+            requirements_file = comfyui_path / "requirements.txt"
+            if requirements_file.exists():
+                self.log(f"Installing requirements from {requirements_file}...")
+
+                # Use the conda environment's pip
+                pip_cmd = [str(python_path), '-m', 'pip', 'install', '-r', str(requirements_file)]
+
+                result = subprocess.run(
+                    pip_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=600
+                )
+
+                if result.returncode == 0:
+                    self.log("✓ Dependencies installed successfully")
+                else:
+                    error_msg = result.stderr if result.stderr else result.stdout
+                    self.log(f"⚠ Warning: Some dependencies may have failed to install", "WARNING")
+                    self.log(f"  Error: {error_msg[:200]}...", "WARNING")
+            else:
+                self.log("⚠ No requirements.txt found, skipping dependency installation", "WARNING")
+
+            # Set environment variables
+            self.log("\n" + "=" * 60)
+            self.log("STEP 5: Setting environment variables...")
+            self.log("=" * 60)
+
+            self.set_persistent_env_var("COMFYUI_BASE", str(self.install_path), system_level=False)
+            self.set_persistent_env_var("COMFYUI_PYTHON", str(python_path), system_level=False)
+            self.set_persistent_env_var("COMFYUI_PYTHON_TYPE", "conda", system_level=False)
+
+            self.log(f"✓ COMFYUI_BASE = {self.install_path}")
+            self.log(f"✓ COMFYUI_PYTHON = {python_path}")
+            self.log(f"✓ COMFYUI_PYTHON_TYPE = conda")
+
+            return True, f"ComfyUI installed successfully to {comfyui_path}", python_path, "conda"
+
+        except FileNotFoundError as e:
+            return False, f"Required command not found: {e}", None, "conda"
+        except Exception as e:
+            return False, f"Installation failed: {e}", None, "conda"
 
     @staticmethod
     def is_admin() -> bool:

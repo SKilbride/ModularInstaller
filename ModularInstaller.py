@@ -136,6 +136,8 @@ def main():
                         help="Clean up partial download files and exit")
     parser.add_argument("--keep-extracted", action="store_true",
                         help="Keep extracted temporary files for debugging (don't auto-cleanup)")
+    parser.add_argument("--git-install-comfyui", action="store_true",
+                        help="Install ComfyUI from GitHub repository using conda environment instead of portable version")
 
     args = parser.parse_args()
 
@@ -187,6 +189,7 @@ def main():
     # === COMFYUI INSTALLATION/DETECTION ===
     install_path = Path(args.install_path) if args.install_path else ComfyUIInstaller.DEFAULT_INSTALL_PATH
     comfyui_installer = ComfyUIInstaller(install_path=install_path)
+    use_git_install = args.git_install_comfyui
 
     # Determine ComfyUI path
     if args.comfy_path:
@@ -253,7 +256,11 @@ def main():
                 return 1
 
             # Prompt to install
-            print("\nWould you like to download and install ComfyUI portable? (y/n): ", end="")
+            if use_git_install:
+                print("\nWould you like to install ComfyUI from GitHub using conda? (y/n): ", end="")
+            else:
+                print("\nWould you like to download and install ComfyUI portable? (y/n): ", end="")
+
             try:
                 response = input().strip().lower()
                 if response != 'y':
@@ -267,20 +274,38 @@ def main():
             print("\n" + "=" * 60)
             print("INSTALLING COMFYUI")
             print("=" * 60)
-            success, message = comfyui_installer.install_comfyui()
-            if not success:
-                print(f"❌ ERROR: {message}")
-                return 1
 
-            print(f"✓ {message}")
+            if use_git_install:
+                # Git-based installation with conda
+                success, message, python_executable, python_type = comfyui_installer.install_comfyui_git()
+                if not success:
+                    print(f"❌ ERROR: {message}")
+                    return 1
 
-            # Get installation info after install
-            info = comfyui_installer.get_installation_info()
-            comfy_path = info['comfyui_path']
-            python_executable = info['python_executable']
+                print(f"✓ {message}")
 
-            if python_executable:
-                print(f"✓ Embedded Python: {python_executable}")
+                # Get ComfyUI path
+                comfy_path = comfyui_installer.install_path / "ComfyUI"
+
+                if python_executable:
+                    print(f"✓ Conda Python: {python_executable}")
+                    print(f"✓ Python Type: {python_type}")
+            else:
+                # Portable installation
+                success, message = comfyui_installer.install_comfyui()
+                if not success:
+                    print(f"❌ ERROR: {message}")
+                    return 1
+
+                print(f"✓ {message}")
+
+                # Get installation info after install
+                info = comfyui_installer.get_installation_info()
+                comfy_path = info['comfyui_path']
+                python_executable = info['python_executable']
+
+                if python_executable:
+                    print(f"✓ Embedded Python: {python_executable}")
 
         print("=" * 60 + "\n")
 

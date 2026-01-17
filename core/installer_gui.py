@@ -53,14 +53,26 @@ class InstallerThread(QThread):
                     msg = f"✗ ComfyUI not found at {install_path}"
                     self.log_signal.emit(msg)
                     print(msg)
-                    msg = "→ Installing ComfyUI..."
-                    self.log_signal.emit(msg)
-                    print(msg)
-                    success, message = installer.install_comfyui()
-                    if not success:
-                        self.finished_signal.emit(False, message)
-                        return
-                    self.log_signal.emit(f"✓ {message}")
+
+                    # Check if git installation is requested
+                    if self.config.get('git_install'):
+                        msg = "→ Installing ComfyUI from GitHub using conda..."
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        success, message, python_executable, python_type = installer.install_comfyui_git()
+                        if not success:
+                            self.finished_signal.emit(False, message)
+                            return
+                        self.log_signal.emit(f"✓ {message}")
+                    else:
+                        msg = "→ Installing ComfyUI portable..."
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        success, message = installer.install_comfyui()
+                        if not success:
+                            self.finished_signal.emit(False, message)
+                            return
+                        self.log_signal.emit(f"✓ {message}")
                 else:
                     msg = f"✓ ComfyUI found at {install_path}"
                     self.log_signal.emit(msg)
@@ -430,6 +442,8 @@ class InstallerWindow(QWidget):
 
         self.force_checkbox = QCheckBox("Force re-download all items")
         self.required_only_checkbox = QCheckBox("Install only required items")
+        self.git_install_checkbox = QCheckBox("Install ComfyUI from GitHub using conda (cross-platform)")
+        self.git_install_checkbox.setToolTip("Clone ComfyUI from GitHub repository and create a conda environment. Works on both Windows and Linux.")
         self.install_blender_checkbox = QCheckBox("Install Blender 4.5 LTS (Windows only)")
         self.install_blender_checkbox.setChecked(True)
 
@@ -439,6 +453,7 @@ class InstallerWindow(QWidget):
 
         options_layout.addWidget(self.force_checkbox)
         options_layout.addWidget(self.required_only_checkbox)
+        options_layout.addWidget(self.git_install_checkbox)
         options_layout.addWidget(self.install_blender_checkbox)
 
         main_layout.addWidget(options_group)
@@ -520,6 +535,7 @@ class InstallerWindow(QWidget):
             'manifest_path': manifest_path,
             'force': self.force_checkbox.isChecked(),
             'required_only': self.required_only_checkbox.isChecked(),
+            'git_install': self.git_install_checkbox.isChecked(),
             'install_blender': self.install_blender_checkbox.isChecked(),
             'keep_extracted': '--keep-extracted' in sys.argv,  # Check for CLI flag
         }
