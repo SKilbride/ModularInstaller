@@ -16,9 +16,13 @@ try:
     QT_AVAILABLE = True
 except Exception:  # pragma: no cover
     QT_AVAILABLE = False
+    # Define dummy types for type hints when Qt is not available
+    QVBoxLayout = None
+    QWidget = None
+    QHBoxLayout = None
 
 
-def _add_with_margin(parent_layout: QVBoxLayout, child_item) -> None:
+def _add_with_margin(parent_layout: 'QVBoxLayout', child_item) -> None:
     """Add widget OR layout with consistent left margin for alignment."""
     margin = QWidget()
     margin.setFixedWidth(12)

@@ -11,17 +11,59 @@ Key features:
 - Generates metrics like images per minute, average time per image, and execution times.
 - Logs output and handles cleanup, including process termination and temporary directories.
 
+## Platform Support
+
+- **Windows**: Fully supported with both portable and GitHub-based installations
+- **Linux**: Fully supported with GitHub-based installation using Miniconda
+- **macOS**: Partial support (not extensively tested)
+
 ## Prerequisites
-1. A working Git installation
-   
+
+1. **Git**: Required for cloning repositories
+2. **Python 3.8+**: Can be provided via:
+   - ComfyUI's embedded Python (Windows portable)
+   - Miniconda/Anaconda (recommended for Linux)
+   - System Python (manual setup)
+
 ## Installation/Setup
-1. Install ComfyUI (portable, manual installation or desktop app version).
-2. Open a CMD, Powershell or Terminal console in the ComfyUI folder of your ComfyUI installation.  Note: For desktop application installations this folder will be located in the user Documents directory.
-3. Use Git to clone this repository:  ```git clone https://github.com/SKilbride/ComfyUI-Benchmark-Framework```
-4. NOTE: All Python commands must utilize the python environment used with ComfyUI, for Python
-5. CD into the ComfyUI-Benchmark-Framework directory
-6. Install the necessary dependencies ```python -m pip install -r requirements.txt```
-7. Optionally install the `comfyui-benchmark` custom node for enhanced benchmarking output (JSON statistics files).
+
+### Quick Start (Automated Installation - Recommended for Linux)
+
+For a fully automated installation with Miniconda support:
+
+```bash
+# Clone this repository first
+git clone https://github.com/SKilbride/ComfyUI-Benchmark-Framework
+cd ComfyUI-Benchmark-Framework
+
+# Install ComfyUI from GitHub with conda environment (cross-platform)
+python ModularInstaller.py --install-comfyui --comfy_path ~/ComfyUI
+
+# Or on Windows
+python ModularInstaller.py --install-comfyui --comfy_path C:\ComfyUI
+```
+
+This will:
+1. Check for Miniconda and install it if needed (via `winget` on Windows or installer script on Linux)
+2. Create a conda environment named `comfyui_bp` with Python 3.11
+3. Clone ComfyUI from GitHub
+4. Install all dependencies including PyTorch with CUDA support (Linux)
+
+**For detailed installation instructions, troubleshooting, and advanced options, see [INSTALL.md](INSTALL.md)**
+
+### Manual Installation (Traditional Method)
+
+1. Install ComfyUI (portable on Windows, manual installation, or desktop app version)
+2. Open a CMD, PowerShell, or Terminal console in the ComfyUI folder of your ComfyUI installation
+   - Note: For desktop application installations, this folder will be located in the user Documents directory
+3. Use Git to clone this repository: `git clone https://github.com/SKilbride/ComfyUI-Benchmark-Framework`
+4. CD into the ComfyUI-Benchmark-Framework directory
+5. Install the necessary dependencies:
+   ```bash
+   # Use ComfyUI's Python environment
+   python -m pip install -r requirements.txt
+   ```
+6. Optionally install the `comfyui-benchmark` custom node for enhanced benchmarking output (JSON statistics files)
 
 ## Running the Benchmark
 The benchmarking framework works by running prebuilt benchmarking packages. These packages contain all the necessary primary and secondary model files required to run a dedicated benchmark workflow. Workflow files are ComfyUI JSON workflow files configured for running using the ComfyUI API mode.

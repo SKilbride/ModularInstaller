@@ -93,27 +93,61 @@ class BenchmarkNodeManager:
             yaml_path = os.path.join(self.benchmark_path, 'config.yaml')
             self.yaml = YamlObject(yaml_path)
 
-def get_comfy_python(comfy_path: Path) -> str:
+def get_comfy_python(comfy_path: Path, conda_env: str = None) -> str:
     """
     Return the correct python executable for a ComfyUI installation.
-    Prioritizes: .venv > venv > conda (fallback to current)
+    Prioritizes: conda env (if specified) > .venv > venv > fallback to current
+
+    Args:
+        comfy_path: Path to ComfyUI installation
+        conda_env: Optional conda environment name (e.g., 'comfyui_bp')
+
+    Returns:
+        Path to python executable
     """
     comfy_path = Path(comfy_path)
 
-    # 1. Standard venv (.venv or venv)
+    # 1. Conda environment (if specified)
+    if conda_env:
+        try:
+            # Try to get conda base path
+            result = subprocess.run(
+                ['conda', 'info', '--base'],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            if result.returncode == 0:
+                conda_base = Path(result.stdout.strip())
+
+                # Check for python in conda environment
+                if sys.platform == "win32":
+                    conda_python = conda_base / "envs" / conda_env / "python.exe"
+                else:
+                    conda_python = conda_base / "envs" / conda_env / "bin" / "python"
+
+                if conda_python.exists():
+                    print(f"[INFO] Using conda environment '{conda_env}': {conda_python}")
+                    return str(conda_python)
+                else:
+                    print(f"[WARNING] Conda environment '{conda_env}' not found at {conda_python}")
+        except (subprocess.TimeoutExpired, FileNotFoundError, subprocess.SubprocessError) as e:
+            print(f"[WARNING] Could not access conda: {e}")
+
+    # 2. Standard venv (.venv or venv) - check both Windows and Linux paths
     candidates = [
-        comfy_path / ".venv" / "Scripts" / "python.exe",
-        comfy_path / ".venv" / "bin" / "python",
-        comfy_path / "venv" / "Scripts" / "python.exe",
-        comfy_path / "venv" / "bin" / "python",
+        comfy_path / ".venv" / "Scripts" / "python.exe",  # Windows
+        comfy_path / ".venv" / "bin" / "python",          # Linux/Mac
+        comfy_path / "venv" / "Scripts" / "python.exe",   # Windows
+        comfy_path / "venv" / "bin" / "python",           # Linux/Mac
     ]
     for cand in candidates:
         if cand.exists():
             print(f"[INFO] Using ComfyUI's virtual environment: {cand}")
             return str(cand)
 
-    # 2. Fallback: hope we're already in the right env
-    print(f"[WARNING] No .venv found in {comfy_path} — using current Python ({sys.executable})")
+    # 3. Fallback: hope we're already in the right env
+    print(f"[WARNING] No venv or conda env found — using current Python ({sys.executable})")
     return sys.executable
 
 def wait_for_completion(prompt_id, server_address, timeout=600, instance_id=None, debug=False):
@@ -356,7 +390,55 @@ def main():
     parser.add_argument("--gui", action="store_true", help="Show a Qt-based GUI to pick -c and -w")
     parser.add_argument("--timeout", type=int, default=4000, help="Timeout in seconds for prompt completion (default: 4000)")
 
+    # Installation options
+    parser.add_argument("--install-comfyui", action="store_true", help="Install ComfyUI from GitHub with conda environment")
+    parser.add_argument("--conda-env", type=str, default="comfyui_bp", help="Conda environment name to use/create (default: comfyui_bp)")
+    parser.add_argument("--python-version", type=str, default="3.11", help="Python version for conda environment (default: 3.11)")
+    parser.add_argument("--check-conda", action="store_true", help="Check if conda is installed and exit")
+
     args = parser.parse_args()
+
+    # === INSTALLATION MODE ===
+    from core.comfyui_installer import ComfyUIInstaller
+
+    # Check conda installation if requested
+    if args.check_conda:
+        installer = ComfyUIInstaller(Path.home() / "ComfyUI")
+        is_installed, conda_path = installer.check_conda_installed()
+        if is_installed:
+            print(f"✓ Conda is installed: {conda_path}")
+            sys.exit(0)
+        else:
+            print("✗ Conda is not installed")
+            sys.exit(1)
+
+    # Install ComfyUI if requested
+    if args.install_comfyui:
+        if not args.comfy_path:
+            print("Error: --comfy_path is required when using --install-comfyui")
+            print("Example: python ModularInstaller.py --install-comfyui --comfy_path ~/ComfyUI")
+            sys.exit(1)
+
+        install_path = Path(args.comfy_path).resolve()
+        log_file = None
+        if args.log:
+            log_file = Path("comfyui_install.log")
+
+        installer = ComfyUIInstaller(install_path, log_file)
+        success = installer.full_install(args.conda_env, args.python_version)
+
+        if success:
+            print("\n" + "=" * 60)
+            print("Installation completed successfully!")
+            print("=" * 60)
+            print(f"\nTo run benchmarks with this installation, use:")
+            print(f"  python ModularInstaller.py -c {install_path} --conda-env {args.conda_env} -w <workflow_path>")
+            sys.exit(0)
+        else:
+            print("\n" + "=" * 60)
+            print("Installation failed. Please check the logs for details.")
+            print("=" * 60)
+            sys.exit(1)
 
     # === GUI MODE ===
     if args.gui:
@@ -489,7 +571,7 @@ def main():
                     show_restart_required_dialog(
                         package_manager=package_manager,
                         args=args,
-                        python_exe=get_comfy_python(comfy_path),
+                        python_exe=get_comfy_python(comfy_path, args.conda_env if hasattr(args, 'conda_env') else None),
                         script_fpath=(__file__),
                         log_file=log_file
 
@@ -500,7 +582,7 @@ def main():
                     sys.exit(0)
                 processes.append(None)
                 continue
-            python_exe = get_comfy_python(comfy_path)
+            python_exe = get_comfy_python(comfy_path, args.conda_env if hasattr(args, 'conda_env') else None)
             cmd = [
                 python_exe,
                 "main.py",
