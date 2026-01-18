@@ -13,7 +13,7 @@ try:
         QLabel, QLineEdit, QPushButton, QFileDialog, QMessageBox,
         QCheckBox, QFormLayout, QTextEdit, QProgressBar, QInputDialog
     )
-    from qtpy.QtCore import Qt, QThread, Signal
+    from qtpy.QtCore import Qt, QThread, Signal, QMutex, QWaitCondition
     from qtpy.QtGui import QFont, QIcon
     QT_AVAILABLE = True
 except Exception:
@@ -26,11 +26,14 @@ class InstallerThread(QThread):
     progress_signal = Signal(int)
     finished_signal = Signal(bool, str)
     request_hf_token_signal = Signal()  # Signal to request HF token from main thread
+    token_received_signal = Signal()  # Signal from main thread when token is set
 
     def __init__(self, config):
         super().__init__()
         self.config = config
         self.hf_token = None  # Will be set by main thread if requested
+        self.token_mutex = QMutex()
+        self.token_condition = QWaitCondition()
 
     def run(self):
         """Run the installation in a separate thread."""
@@ -231,14 +234,13 @@ class InstallerThread(QThread):
                     # Request token from main thread and wait for response
                     self.request_hf_token_signal.emit()
 
-                    # Wait for token to be set (with timeout)
-                    import time
-                    timeout = 60  # 60 seconds timeout
-                    start_time = time.time()
-                    while self.hf_token is None and (time.time() - start_time) < timeout:
-                        time.sleep(0.1)
+                    # Wait for token to be set using QWaitCondition (with timeout)
+                    self.token_mutex.lock()
+                    timeout_ms = 120000  # 120 seconds (2 minutes) in milliseconds
+                    token_received = self.token_condition.wait(self.token_mutex, timeout_ms)
+                    self.token_mutex.unlock()
 
-                    if self.hf_token:
+                    if token_received and self.hf_token:
                         handler.set_hf_token(self.hf_token)
                         self.log_signal.emit("✓ HuggingFace token provided")
                     elif self.hf_token == "":
@@ -603,11 +605,15 @@ class InstallerWindow(QWidget):
             QLineEdit.Password
         )
 
+        # Set token and wake up waiting thread
+        self.installer_thread.token_mutex.lock()
         if ok and text:
             self.installer_thread.hf_token = text.strip()
         else:
             # User cancelled - set empty string to signal cancellation
             self.installer_thread.hf_token = ""
+        self.installer_thread.token_condition.wakeAll()
+        self.installer_thread.token_mutex.unlock()
 
 
 if __name__ == "__main__":
