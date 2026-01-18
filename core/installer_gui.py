@@ -592,28 +592,71 @@ class InstallerWindow(QWidget):
 
     def prompt_for_hf_token(self):
         """Prompt user for HuggingFace token."""
-        text, ok = QInputDialog.getText(
-            self,
-            "HuggingFace Token Required",
-            "This package includes gated models that require a HuggingFace token.\n\n"
-            "To get a token:\n"
-            "1. Visit https://huggingface.co/settings/tokens\n"
-            "2. Create a new token with 'Read' permission\n"
-            "3. Accept the license for gated models on HuggingFace\n"
-            "4. Paste the token below\n\n"
-            "Token:",
-            QLineEdit.Password
-        )
+        from core.manifest_handler import ManifestHandler
 
-        # Set token and wake up waiting thread
-        self.installer_thread.token_mutex.lock()
-        if ok and text:
-            self.installer_thread.hf_token = text.strip()
-        else:
-            # User cancelled - set empty string to signal cancellation
-            self.installer_thread.hf_token = ""
-        self.installer_thread.token_condition.wakeAll()
-        self.installer_thread.token_mutex.unlock()
+        while True:
+            text, ok = QInputDialog.getText(
+                self,
+                "HuggingFace Token Required",
+                "This package includes gated models that require a HuggingFace token.\n\n"
+                "To get a token:\n"
+                "1. Visit https://huggingface.co/settings/tokens\n"
+                "2. Create a new token with 'Read' permission\n"
+                "3. Accept the license for gated models on HuggingFace\n"
+                "4. Paste the token below\n\n"
+                "Token:",
+                QLineEdit.Password
+            )
+
+            # Set token and wake up waiting thread
+            self.installer_thread.token_mutex.lock()
+
+            if not ok:
+                # User cancelled - set empty string to signal cancellation
+                self.installer_thread.hf_token = ""
+                self.installer_thread.token_condition.wakeAll()
+                self.installer_thread.token_mutex.unlock()
+                break
+
+            token = text.strip()
+            if not token:
+                # Empty token - accept and continue
+                self.installer_thread.hf_token = ""
+                self.installer_thread.token_condition.wakeAll()
+                self.installer_thread.token_mutex.unlock()
+                break
+
+            # Validate token format
+            if ManifestHandler._is_valid_hf_token(token):
+                self.installer_thread.hf_token = token
+                self.installer_thread.token_condition.wakeAll()
+                self.installer_thread.token_mutex.unlock()
+                break
+            else:
+                # Invalid token format - unlock and show error
+                self.installer_thread.token_mutex.unlock()
+
+                retry = QMessageBox.question(
+                    self,
+                    "Invalid Token Format",
+                    "The token you entered doesn't match the expected HuggingFace format.\n\n"
+                    "HuggingFace tokens should:\n"
+                    "• Start with 'hf_' (for new tokens)\n"
+                    "• Be 37-50 characters long\n"
+                    "• Contain only letters, numbers, and underscores\n\n"
+                    "Would you like to try again?",
+                    QMessageBox.Yes | QMessageBox.No,
+                    QMessageBox.Yes
+                )
+
+                if retry == QMessageBox.No:
+                    # User chose not to retry
+                    self.installer_thread.token_mutex.lock()
+                    self.installer_thread.hf_token = ""
+                    self.installer_thread.token_condition.wakeAll()
+                    self.installer_thread.token_mutex.unlock()
+                    break
+                # Loop continues to prompt again
 
 
 if __name__ == "__main__":

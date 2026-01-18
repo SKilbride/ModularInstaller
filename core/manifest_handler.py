@@ -103,7 +103,38 @@ class ManifestHandler:
         Args:
             token: HuggingFace access token
         """
-        self.hf_token = token.strip() if token else None
+        if token:
+            token = token.strip()
+            # Validate token format
+            if not self._is_valid_hf_token(token):
+                self.log("⚠ Warning: Token doesn't match expected HuggingFace format (should start with 'hf_')", "WARNING")
+                self.log("  Proceeding anyway, but downloads may fail if token is invalid", "WARNING")
+
+        self.hf_token = token if token else None
+
+    @staticmethod
+    def _is_valid_hf_token(token: str) -> bool:
+        """
+        Validate HuggingFace token format.
+
+        Args:
+            token: Token string to validate
+
+        Returns:
+            True if token matches expected format, False otherwise
+        """
+        if not token or len(token) < 10:
+            return False
+
+        # HuggingFace tokens typically start with 'hf_' followed by alphanumeric characters
+        # Modern format: hf_[A-Za-z0-9]{34,40}
+        # Legacy format may not have hf_ prefix but should be at least 20 chars
+        if token.startswith('hf_'):
+            # New format with hf_ prefix
+            return len(token) >= 37 and len(token) <= 50 and token[3:].replace('_', '').isalnum()
+        else:
+            # Legacy format or API key - just check it's reasonably long and alphanumeric-ish
+            return len(token) >= 20 and len(token) <= 50
 
     def _ensure_git_available(self) -> str:
         """

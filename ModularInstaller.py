@@ -461,12 +461,29 @@ def main():
                 print("=" * 60)
 
                 try:
-                    token = input("\nEnter your HuggingFace token (or press Enter to skip): ").strip()
-                    if token:
-                        handler.set_hf_token(token)
-                        print("✓ HuggingFace token set")
-                    else:
-                        print("⚠ No token provided - gated models may fail to download")
+                    while True:
+                        token = input("\nEnter your HuggingFace token (or press Enter to skip): ").strip()
+                        if not token:
+                            print("⚠ No token provided - gated models may fail to download")
+                            break
+
+                        # Validate token format
+                        if handler._is_valid_hf_token(token):
+                            handler.set_hf_token(token)
+                            print("✓ HuggingFace token set")
+                            break
+                        else:
+                            print("\n❌ Invalid token format!")
+                            print("   HuggingFace tokens should:")
+                            print("   - Start with 'hf_' (for new tokens)")
+                            print("   - Be 37-50 characters long")
+                            print("   - Contain only letters, numbers, and underscores")
+                            print("\n   Please check your token and try again.")
+                            retry = input("   Try again? (y/n): ").strip().lower()
+                            if retry != 'y':
+                                print("⚠ No valid token provided - gated models may fail to download")
+                                break
+
                 except (KeyboardInterrupt, EOFError):
                     print("\n⚠ No token provided - gated models may fail to download")
 
