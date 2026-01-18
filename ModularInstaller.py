@@ -189,7 +189,14 @@ def main():
     # === COMFYUI INSTALLATION/DETECTION ===
     install_path = Path(args.install_path) if args.install_path else ComfyUIInstaller.DEFAULT_INSTALL_PATH
     comfyui_installer = ComfyUIInstaller(install_path=install_path)
-    use_git_install = args.git_install_comfyui
+
+    # Default to git install on Linux, unless explicitly set
+    if args.git_install_comfyui:
+        use_git_install = True
+    elif sys.platform.startswith("linux"):
+        use_git_install = True  # Default for Linux
+    else:
+        use_git_install = False  # Default for Windows/Mac
 
     # Determine ComfyUI path
     if args.comfy_path:

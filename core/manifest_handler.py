@@ -91,7 +91,7 @@ class ManifestHandler:
         if not self.manifest:
             return False
 
-        for item in self.manifest.get('resources', []):
+        for item in self.manifest.get('items', []):
             if item.get('source') == 'huggingface' and item.get('gated', False):
                 return True
         return False

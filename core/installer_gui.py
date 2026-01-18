@@ -449,6 +449,11 @@ class InstallerWindow(QWidget):
         self.required_only_checkbox = QCheckBox("Install only required items")
         self.git_install_checkbox = QCheckBox("Install ComfyUI from GitHub using conda (cross-platform)")
         self.git_install_checkbox.setToolTip("Clone ComfyUI from GitHub repository and create a conda environment. Works on both Windows and Linux.")
+
+        # Default to git install on Linux
+        if sys.platform.startswith("linux"):
+            self.git_install_checkbox.setChecked(True)
+
         self.install_blender_checkbox = QCheckBox("Install Blender 4.5 LTS (Windows only)")
         self.install_blender_checkbox.setChecked(True)
 
