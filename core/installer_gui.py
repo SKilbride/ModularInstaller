@@ -221,27 +221,32 @@ class InstallerThread(QThread):
             handler.ensure_prerequisites()
 
             # Check for gated models and prompt for HF token if needed
-            if handler.has_gated_models() and not handler.hf_token:
-                self.log_signal.emit("\n⚠ Gated models detected - HuggingFace token required")
-                # Request token from main thread and wait for response
-                self.request_hf_token_signal.emit()
-
-                # Wait for token to be set (with timeout)
-                import time
-                timeout = 60  # 60 seconds timeout
-                start_time = time.time()
-                while self.hf_token is None and (time.time() - start_time) < timeout:
-                    time.sleep(0.1)
-
-                if self.hf_token:
-                    handler.set_hf_token(self.hf_token)
-                    self.log_signal.emit("✓ HuggingFace token provided")
-                elif self.hf_token == "":
-                    # User cancelled
-                    self.log_signal.emit("⚠ No token provided - gated models may fail to download")
+            if handler.has_gated_models():
+                if handler.hf_token:
+                    self.log_signal.emit("\n✓ HuggingFace token found (from environment variable)")
+                    self.log_signal.emit("  Note: If downloads fail with 401 errors, your token may need updating")
+                    self.log_signal.emit("  or you may need to accept the license for specific models on HuggingFace")
                 else:
-                    # Timeout
-                    self.log_signal.emit("⚠ Token prompt timed out - gated models may fail to download")
+                    self.log_signal.emit("\n⚠ Gated models detected - HuggingFace token required")
+                    # Request token from main thread and wait for response
+                    self.request_hf_token_signal.emit()
+
+                    # Wait for token to be set (with timeout)
+                    import time
+                    timeout = 60  # 60 seconds timeout
+                    start_time = time.time()
+                    while self.hf_token is None and (time.time() - start_time) < timeout:
+                        time.sleep(0.1)
+
+                    if self.hf_token:
+                        handler.set_hf_token(self.hf_token)
+                        self.log_signal.emit("✓ HuggingFace token provided")
+                    elif self.hf_token == "":
+                        # User cancelled
+                        self.log_signal.emit("⚠ No token provided - gated models may fail to download")
+                    else:
+                        # Timeout
+                        self.log_signal.emit("⚠ Token prompt timed out - gated models may fail to download")
 
             self.log_signal.emit("Downloading and installing items...")
             handler.download_items(

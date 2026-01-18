@@ -435,28 +435,33 @@ def main():
         handler.ensure_prerequisites()
 
         # Check for gated models and prompt for HF token if needed
-        if handler.has_gated_models() and not handler.hf_token:
-            print("\n" + "=" * 60)
-            print("⚠ HUGGINGFACE TOKEN REQUIRED")
-            print("=" * 60)
-            print("This package includes gated models that require a HuggingFace token.")
-            print("\nTo get a token:")
-            print("  1. Visit https://huggingface.co/settings/tokens")
-            print("  2. Create a new token with 'Read' permission")
-            print("  3. Accept the license for gated models on HuggingFace")
-            print("  4. Paste the token below")
-            print("\nAlternatively, set the HF_TOKEN environment variable.")
-            print("=" * 60)
+        if handler.has_gated_models():
+            if handler.hf_token:
+                print(f"\n✓ HuggingFace token found (from environment variable)")
+                print("  Note: If downloads fail with 401 errors, your token may need updating")
+                print("  or you may need to accept the license for specific models on HuggingFace")
+            else:
+                print("\n" + "=" * 60)
+                print("⚠ HUGGINGFACE TOKEN REQUIRED")
+                print("=" * 60)
+                print("This package includes gated models that require a HuggingFace token.")
+                print("\nTo get a token:")
+                print("  1. Visit https://huggingface.co/settings/tokens")
+                print("  2. Create a new token with 'Read' permission")
+                print("  3. Accept the license for gated models on HuggingFace")
+                print("  4. Paste the token below")
+                print("\nAlternatively, set the HF_TOKEN environment variable.")
+                print("=" * 60)
 
-            try:
-                token = input("\nEnter your HuggingFace token (or press Enter to skip): ").strip()
-                if token:
-                    handler.set_hf_token(token)
-                    print("✓ HuggingFace token set")
-                else:
-                    print("⚠ No token provided - gated models may fail to download")
-            except (KeyboardInterrupt, EOFError):
-                print("\n⚠ No token provided - gated models may fail to download")
+                try:
+                    token = input("\nEnter your HuggingFace token (or press Enter to skip): ").strip()
+                    if token:
+                        handler.set_hf_token(token)
+                        print("✓ HuggingFace token set")
+                    else:
+                        print("⚠ No token provided - gated models may fail to download")
+                except (KeyboardInterrupt, EOFError):
+                    print("\n⚠ No token provided - gated models may fail to download")
 
         # Print summary
         handler.print_summary()

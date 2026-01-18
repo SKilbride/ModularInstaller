@@ -697,11 +697,32 @@ class ManifestHandler:
                 shutil.move(str(downloaded_path), str(local_path))
             else:
                 raise FileNotFoundError(f"Download failed, file not found at {downloaded_path}")
-            
+
         except Exception as e:
+            error_str = str(e)
             self.log(f"✗ Download failed: {e}", "ERROR")
+
+            # Provide helpful error messages for common issues
+            if "401" in error_str or "403" in error_str or "Access to model" in error_str:
+                self.log("", "ERROR")
+                self.log("=" * 60, "ERROR")
+                self.log("HUGGINGFACE AUTHENTICATION ERROR", "ERROR")
+                self.log("=" * 60, "ERROR")
+                self.log(f"Model: {repo_id}", "ERROR")
+                self.log("", "ERROR")
+                self.log("This is a gated model that requires authentication.", "ERROR")
+                self.log("Please ensure you have:", "ERROR")
+                self.log("  1. A valid HuggingFace token with 'Read' permission", "ERROR")
+                self.log("  2. Accepted the license for this model on HuggingFace", "ERROR")
+                self.log(f"     Visit: https://huggingface.co/{repo_id}", "ERROR")
+                self.log("  3. Set your token via HF_TOKEN environment variable", "ERROR")
+                self.log("     or provided it when prompted", "ERROR")
+                self.log("", "ERROR")
+                self.log("To get a token: https://huggingface.co/settings/tokens", "ERROR")
+                self.log("=" * 60, "ERROR")
+
             raise
-        
+
         finally:
             # CLEANUP: Remove the temporary directory and all HF artifacts
             if temp_download_dir.exists():
