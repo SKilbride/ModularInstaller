@@ -744,10 +744,10 @@ class ComfyUIInstaller:
                 python_path = self._get_conda_env_python(env_name)
                 return True, f"Using existing conda environment '{env_name}'", python_path
 
-            # Create new environment with Python 3.11 (good compatibility with ComfyUI)
-            self.log(f"Creating new conda environment with Python 3.11...")
+            # Create new environment with Python 3.13 (good compatibility with ComfyUI)
+            self.log(f"Creating new conda environment with Python 3.13...")
             result = subprocess.run(
-                ['conda', 'create', '-n', env_name, 'python=3.11', '-y'],
+                ['conda', 'create', '-n', env_name, 'python=3.13', '-y'],
                 capture_output=True,
                 text=True,
                 timeout=300
