@@ -1287,10 +1287,43 @@ class ManifestHandler:
         - Local wheel files: source="pip", package="path/to/package.whl"
         - URLs: source="pip", package="https://example.com/package.whl"
         - InstallTemp wheels: source="install_temp", source_path="wheels/my_package.whl"
+        - Custom pip args: pip_args="--index-url https://download.pytorch.org/whl/cu130"
+        - Uninstall before install: uninstall_current=true
+        - Uninstall only: uninstall_only=true
         """
         package_spec = item.get('package', item['name'])
         version = item.get('version')
         source_path = item.get('source_path')
+        uninstall_current = item.get('uninstall_current', False)
+        uninstall_only = item.get('uninstall_only', False)
+
+        # Handle uninstall_only mode
+        if uninstall_only:
+            self.log(f"↓ Uninstalling Python package: {package_spec}...")
+            self.log(f"  Using Python: {self.python_executable}")
+            try:
+                self._run_pip_install_with_retry(['uninstall', package_spec, '-y'])
+                self.log(f"✓ {item['name']} uninstalled via pip")
+                self.downloaded_items.append(item)
+            except subprocess.CalledProcessError as e:
+                error_msg = e.stderr if e.stderr else str(e)
+                self.log(f"✗ Pip uninstall failed: {error_msg}", "ERROR")
+                if item.get('required', False):
+                    raise
+                else:
+                    self.log(f"⚠ Optional package {item['name']} failed to uninstall", "WARNING")
+            return
+
+        # Handle uninstall_current before installing
+        if uninstall_current:
+            self.log(f"↓ Uninstalling current version of {package_spec}...")
+            self.log(f"  Using Python: {self.python_executable}")
+            try:
+                self._run_pip_install_with_retry(['uninstall', package_spec, '-y'])
+                self.log(f"✓ Current version uninstalled")
+            except subprocess.CalledProcessError as e:
+                # Package might not be installed, which is fine
+                self.log(f"  Package not currently installed or uninstall failed (continuing)", "WARNING")
 
         # Handle install_temp source for bundled wheel files
         if item.get('source') == 'install_temp':
@@ -1355,8 +1388,36 @@ class ManifestHandler:
 
         self.log(f"  Using Python: {self.python_executable}")
 
+        # Build pip install command
+        pip_cmd = ['install', package_spec]
+
+        # Add custom pip arguments
+        # Support convenience fields for common pip arguments
+        if 'index_url' in item:
+            pip_cmd.extend(['--index-url', item['index_url']])
+            self.log(f"  Using custom index URL: {item['index_url']}")
+
+        if 'extra_index_url' in item:
+            pip_cmd.extend(['--extra-index-url', item['extra_index_url']])
+            self.log(f"  Using extra index URL: {item['extra_index_url']}")
+
+        if 'find_links' in item:
+            pip_cmd.extend(['--find-links', item['find_links']])
+            self.log(f"  Using find-links: {item['find_links']}")
+
+        # Generic pip_args for any other flags
+        if 'pip_args' in item:
+            if isinstance(item['pip_args'], list):
+                pip_cmd.extend(item['pip_args'])
+                self.log(f"  Additional pip args: {' '.join(item['pip_args'])}")
+            elif isinstance(item['pip_args'], str):
+                # Split string into arguments (respecting quotes)
+                import shlex
+                pip_cmd.extend(shlex.split(item['pip_args']))
+                self.log(f"  Additional pip args: {item['pip_args']}")
+
         try:
-            self._run_pip_install_with_retry(['install', package_spec])
+            self._run_pip_install_with_retry(pip_cmd)
             self.log(f"✓ {item['name']} installed via pip")
             self.downloaded_items.append(item)
         except subprocess.CalledProcessError as e:
