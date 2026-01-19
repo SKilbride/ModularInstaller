@@ -208,13 +208,21 @@ class InstallerThread(QThread):
 
             self.log_signal.emit(f"Loading manifest: {manifest_path.name}")
 
+            # Build conditions set from config
+            conditions = set(self.config.get('conditions', []))
+
+            # Add automatic conditions based on installation type
+            if self.config.get('git_install'):
+                conditions.add('comfyui_git_install')
+
             handler = ManifestHandler(
                 manifest_path=manifest_path,
                 comfy_path=comfy_path,
                 python_executable=python_executable,
                 max_workers=self.config.get('workers', 4),
                 install_temp_path=install_temp_path,
-                log_callback=self.log_signal.emit  # Pass GUI log callback
+                log_callback=self.log_signal.emit,  # Pass GUI log callback
+                conditions=conditions
             )
 
             handler.load_manifest()

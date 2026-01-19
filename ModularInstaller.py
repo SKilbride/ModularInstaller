@@ -138,6 +138,8 @@ def main():
                         help="Keep extracted temporary files for debugging (don't auto-cleanup)")
     parser.add_argument("--git-install-comfyui", action="store_true",
                         help="Install ComfyUI from GitHub repository using conda environment instead of portable version")
+    parser.add_argument("--set-condition", action="append", dest="conditions",
+                        help="Set a condition for conditional manifest processing (can be used multiple times)")
 
     args = parser.parse_args()
 
@@ -364,7 +366,8 @@ def main():
         handler = ManifestHandler(
             manifest_path=comfy_path / "manifest.json",  # Dummy path
             comfy_path=comfy_path,
-            resume_downloads=True
+            resume_downloads=True,
+            conditions=set()
         )
         handler.cleanup_partial_downloads()
         return 0
@@ -424,6 +427,14 @@ def main():
 
         # === INITIALIZE MANIFEST HANDLER ===
         print("\n[2/3] Loading manifest...")
+
+        # Build conditions set from CLI arguments and system defaults
+        conditions = set(args.conditions) if args.conditions else set()
+
+        # Add automatic conditions based on installation type
+        if use_git_install:
+            conditions.add('comfyui_git_install')
+
         handler = ManifestHandler(
             manifest_path=manifest_path,
             comfy_path=comfy_path,
@@ -431,7 +442,8 @@ def main():
             max_workers=args.workers,
             resume_downloads=not args.no_resume,
             python_executable=python_executable,
-            install_temp_path=install_temp_path
+            install_temp_path=install_temp_path,
+            conditions=conditions
         )
 
         # Load and validate manifest

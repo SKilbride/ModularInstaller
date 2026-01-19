@@ -25,7 +25,8 @@ class ManifestHandler:
 
     def __init__(self, manifest_path: Path, comfy_path: Path, log_file: Optional[Path] = None,
                  max_workers: int = 4, resume_downloads: bool = True, python_executable: Optional[Path] = None,
-                 install_temp_path: Optional[Path] = None, hf_token: Optional[str] = None, log_callback=None):
+                 install_temp_path: Optional[Path] = None, hf_token: Optional[str] = None, log_callback=None,
+                 conditions: Optional[set] = None):
         """
         Initialize ManifestHandler.
 
@@ -39,6 +40,7 @@ class ManifestHandler:
             install_temp_path: Optional path to InstallTemp folder from ZIP package
             hf_token: Optional HuggingFace token for gated models (overrides HF_TOKEN env var)
             log_callback: Optional callback function for log messages (for GUI integration)
+            conditions: Optional set of conditions for conditional manifest processing
         """
         self.manifest_path = Path(manifest_path)
         self.comfy_path = Path(comfy_path)
@@ -52,7 +54,10 @@ class ManifestHandler:
         self.python_executable = Path(python_executable) if python_executable else Path(sys.executable)
         self.partial_download_dir = self.comfy_path / ".partial_downloads"
         self.install_temp_path = Path(install_temp_path) if install_temp_path else None
-        
+
+        # Conditional processing support
+        self.conditions = conditions if conditions is not None else set()
+
         # Track what was actually downloaded vs skipped
         self.downloaded_items = []
         self.skipped_items = []
@@ -135,6 +140,41 @@ class ManifestHandler:
         else:
             # Legacy format or API key - just check it's reasonably long and alphanumeric-ish
             return len(token) >= 20 and len(token) <= 50
+
+    def _should_process_item(self, item: Dict) -> bool:
+        """
+        Check if an item should be processed based on its match_condition.
+
+        Args:
+            item: Manifest item dictionary
+
+        Returns:
+            True if item should be processed, False if it should be skipped
+        """
+        # If item has a match_condition, check if that condition is active
+        if 'match_condition' in item:
+            match_condition = item['match_condition']
+            if match_condition not in self.conditions:
+                return False
+        return True
+
+    def _process_set_condition(self, item: Dict):
+        """
+        Process the set_condition field of an item, adding conditions to the active set.
+
+        Args:
+            item: Manifest item dictionary
+        """
+        if 'set_condition' in item:
+            set_condition = item['set_condition']
+            # Support both single string and list of strings
+            if isinstance(set_condition, str):
+                self.conditions.add(set_condition)
+                self.log(f"  → Condition set: {set_condition}")
+            elif isinstance(set_condition, list):
+                for condition in set_condition:
+                    self.conditions.add(condition)
+                    self.log(f"  → Condition set: {condition}")
 
     def _ensure_git_available(self) -> str:
         """
@@ -505,11 +545,11 @@ class ManifestHandler:
         self._file_status_cache = existing
         return existing
     
-    def download_items(self, skip_existing: bool = True, required_only: bool = False, 
+    def download_items(self, skip_existing: bool = True, required_only: bool = False,
                       verify_checksums: bool = True, dry_run: bool = False, parallel: bool = True):
         """
         Download all items from manifest.
-        
+
         Args:
             skip_existing: Skip files that already exist with valid checksums
             required_only: Only download items marked as required
@@ -518,36 +558,44 @@ class ManifestHandler:
             parallel: Use parallel downloads for improved speed
         """
         items_to_download = self.manifest['items']
-        
+
         if required_only:
             items_to_download = [i for i in items_to_download if i.get('required', False)]
-        
+
         # This will use the cache populated during print_summary()
         existing = self.check_existing_files() if skip_existing else {}
-        
+
         # Filter items that need downloading
         download_list = []
         for item in items_to_download:
             # Skip bundled items
             if item['source'] == 'bundled':
                 continue
-            
+
+            # Check if item should be processed based on conditions
+            if not self._should_process_item(item):
+                match_condition = item.get('match_condition')
+                self.log(f"⊘ Skipping {item['name']} (condition not met: {match_condition})")
+                continue
+
             # Check if we should skip this file
             if skip_existing and item['name'] in existing:
                 file_status = existing[item['name']]
                 if not file_status['needs_download']:
                     self.log(f"⊘ Skipping {item['name']} ({file_status['reason']})")
+                    # Process set_condition even for skipped items
+                    self._process_set_condition(item)
                     continue
                 elif file_status['reason'] == 'checksum_mismatch':
                     self.log(f"⚠ Re-downloading {item['name']} due to checksum mismatch", "WARNING")
-            
+
             # Check for gated models (simple pre-check, logic handled in download)
             if item.get('gated', False) and not self.hf_token:
                 # We log warning here but let it proceed to download so exception can be caught by manifest_integration
                 self.log(f"⚠ {item['name']} is gated and no token set - may fail", "WARNING")
-            
+
             download_list.append((item, existing.get(item['name'], {})))
-        
+
         if dry_run:
             self.log("\n" + "=" * 60)
             self.log("DRY RUN MODE - No downloads will be performed")
@@ -561,7 +609,7 @@ class ManifestHandler:
                     self.log(f"  Resume from: {status['partial_size'] / 1024 / 1024:.1f}MB")
             self.log("=" * 60 + "\n")
             return
-        
+
         # Download items
         if parallel and len(download_list) > 1:
             self._download_parallel(download_list, verify_checksums)
@@ -642,6 +690,9 @@ class ManifestHandler:
             self._download_from_winget(item)
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
+
+        # Process set_condition after successful download
+        self._process_set_condition(item)
     
     def _get_source_info(self, item: Dict) -> str:
         """Get human-readable source information."""
