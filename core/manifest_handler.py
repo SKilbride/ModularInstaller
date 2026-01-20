@@ -143,7 +143,7 @@ class ManifestHandler:
 
     def _should_process_item(self, item: Dict) -> bool:
         """
-        Check if an item should be processed based on its match_condition.
+        Check if an item should be processed based on its conditions.
 
         Args:
             item: Manifest item dictionary
@@ -151,30 +151,73 @@ class ManifestHandler:
         Returns:
             True if item should be processed, False if it should be skipped
         """
-        # If item has a match_condition, check if that condition is active
-        if 'match_condition' in item:
-            match_condition = item['match_condition']
-            if match_condition not in self.conditions:
-                return False
-        return True
+        # Check for new conditions structure
+        if 'conditions' in item:
+            conditions_config = item['conditions']
 
-    def _process_set_condition(self, item: Dict):
+            # Get match_conditions list
+            match_conditions = conditions_config.get('match_conditions', [])
+            if not match_conditions:
+                return True  # No match conditions means always process
+
+            # Extract condition strings from list of dicts
+            required_conditions = []
+            for cond_item in match_conditions:
+                if isinstance(cond_item, dict) and 'condition' in cond_item:
+                    required_conditions.append(cond_item['condition'])
+                elif isinstance(cond_item, str):
+                    required_conditions.append(cond_item)
+
+            if not required_conditions:
+                return True  # No valid conditions means always process
+
+            # Get match_type (default: 'any')
+            match_type = conditions_config.get('match_type', 'any').lower()
+
+            # Check conditions based on match_type
+            if match_type == 'all':
+                # ALL conditions must be present
+                return all(cond in self.conditions for cond in required_conditions)
+            else:  # default to 'any'
+                # ANY condition must be present
+                return any(cond in self.conditions for cond in required_conditions)
+
+        return True  # No conditions specified means always process
+
+    def _process_set_condition(self, item: Dict, was_installed: bool = True):
         """
         Process the set_condition field of an item, adding conditions to the active set.
 
         Args:
             item: Manifest item dictionary
+            was_installed: Whether the item was actually installed (vs skipped)
         """
-        if 'set_condition' in item:
-            set_condition = item['set_condition']
-            # Support both single string and list of strings
-            if isinstance(set_condition, str):
-                self.conditions.add(set_condition)
-                self.log(f"  → Condition set: {set_condition}")
-            elif isinstance(set_condition, list):
-                for condition in set_condition:
-                    self.conditions.add(condition)
-                    self.log(f"  → Condition set: {condition}")
+        # Check for new conditions structure
+        if 'conditions' in item:
+            conditions_config = item['conditions']
+            set_conditions = conditions_config.get('set_conditions', [])
+
+            for cond_item in set_conditions:
+                if isinstance(cond_item, dict):
+                    condition = cond_item.get('condition')
+                    set_condition_when = cond_item.get('set_condition_when', 'installed').lower()
+
+                    if condition:
+                        # Check if we should set this condition
+                        should_set = False
+                        if set_condition_when == 'always':
+                            should_set = True
+                        elif set_condition_when == 'installed' and was_installed:
+                            should_set = True
+
+                        if should_set:
+                            self.conditions.add(condition)
+                            self.log(f"  → Condition set: {condition}")
+                elif isinstance(cond_item, str):
+                    # Support simple string format (defaults to 'installed')
+                    if was_installed:
+                        self.conditions.add(cond_item)
+                        self.log(f"  → Condition set: {cond_item}")
 
     def _ensure_git_available(self) -> str:
         """
@@ -574,8 +617,15 @@ class ManifestHandler:
 
             # Check if item should be processed based on conditions
             if not self._should_process_item(item):
-                match_condition = item.get('match_condition')
-                self.log(f"⊘ Skipping {item['name']} (condition not met: {match_condition})")
+                # Get condition info for logging
+                if 'conditions' in item:
+                    conditions_config = item['conditions']
+                    match_conditions = conditions_config.get('match_conditions', [])
+                    cond_names = [c.get('condition', c) if isinstance(c, dict) else c for c in match_conditions]
+                    match_type = conditions_config.get('match_type', 'any')
+                    self.log(f"⊘ Skipping {item['name']} (conditions not met: {match_type} of {cond_names})")
+                else:
+                    self.log(f"⊘ Skipping {item['name']} (conditions not met)")
                 continue
 
             # Check if we should skip this file
@@ -583,8 +633,8 @@ class ManifestHandler:
                 file_status = existing[item['name']]
                 if not file_status['needs_download']:
                     self.log(f"⊘ Skipping {item['name']} ({file_status['reason']})")
-                    # Process set_condition even for skipped items
-                    self._process_set_condition(item)
+                    # Process set_condition for skipped items (was_installed=False)
+                    self._process_set_condition(item, was_installed=False)
                     continue
                 elif file_status['reason'] == 'checksum_mismatch':
                     self.log(f"⚠ Re-downloading {item['name']} due to checksum mismatch", "WARNING")
@@ -691,8 +741,8 @@ class ManifestHandler:
         else:
             self.log(f"⚠ Unknown source type: {item['source']}", "WARNING")
 
-        # Process set_condition after successful download
-        self._process_set_condition(item)
+        # Process set_condition after successful download/install
+        self._process_set_condition(item, was_installed=True)
     
     def _get_source_info(self, item: Dict) -> str:
         """Get human-readable source information."""

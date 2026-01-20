@@ -431,9 +431,20 @@ def main():
         # Build conditions set from CLI arguments and system defaults
         conditions = set(args.conditions) if args.conditions else set()
 
+        # Add OS detection conditions
+        if sys.platform == "win32":
+            conditions.add('os_windows')
+        elif sys.platform.startswith("linux"):
+            conditions.add('os_linux')
+        elif sys.platform == "darwin":
+            conditions.add('os_darwin')
+            conditions.add('os_mac')  # Alias for darwin
+
         # Add automatic conditions based on installation type
         if use_git_install:
             conditions.add('comfyui_git_install')
+        else:
+            conditions.add('comfyui_portable_install')
 
         handler = ManifestHandler(
             manifest_path=manifest_path,

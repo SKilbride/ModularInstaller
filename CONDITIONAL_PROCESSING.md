@@ -1,207 +1,542 @@
-# Conditional Processing in ModularInstaller
+# Advanced Conditional Processing in ModularInstaller
 
 ## Overview
 
-The ModularInstaller now supports conditional processing of manifest items. This allows you to control which items are installed based on runtime conditions that can be set via command line arguments or automatically based on the installation type.
+The ModularInstaller supports advanced conditional processing with OS detection, match logic (AND/OR), and flexible condition timing. This allows you to create sophisticated installation manifests that adapt to different platforms, installation methods, and runtime scenarios.
 
-## Features
+## Automatic Conditions
 
-### 1. Setting Conditions via Command Line
+The installer automatically sets these conditions based on the system and installation type:
 
-You can set conditions using the `--set-condition` flag (can be used multiple times):
+### OS Detection (Automatic)
+- **`os_windows`** - Set on Windows systems
+- **`os_linux`** - Set on Linux systems
+- **`os_mac`** - Set on macOS systems (recommended)
+- **`os_darwin`** - Set on macOS systems (alias for os_mac)
 
-```bash
-python ModularInstaller.py -m manifest.yaml --set-condition my_condition --set-condition another_condition
-```
+### Installation Type (Automatic)
+- **`comfyui_git_install`** - Set when using git-based installation (`--git-install-comfyui` or default on Linux)
+- **`comfyui_portable_install`** - Set when using portable installation (Windows default)
 
-### 2. Automatic Conditions
-
-Some conditions are set automatically based on the installation type:
-
-- `comfyui_git_install`: Automatically set when using git-based ComfyUI installation (--git-install-comfyui flag or default on Linux)
-
-### 3. Manifest Syntax
-
-#### match_condition
-
-Items can specify a `match_condition` field. If set, the item will only be processed if that condition exists:
-
-```yaml
-items:
-  - name: "torchvision CUDA 13.0"
-    type: pip_package
-    source: pip
-    package: "torchvision"
-    version: "0.24.1"
-    extra_index_url: "https://download.pytorch.org/whl/cu130"
-    uninstall_current: true
-    match_condition: comfyui_git_install  # Only install if git installation is used
-```
-
-#### set_condition
-
-Items can specify a `set_condition` field. When the item is processed (even if skipped because it already exists), the condition(s) will be added to the active condition set:
-
-```yaml
-items:
-  - name: "Base Package"
-    type: pip_package
-    source: pip
-    package: "numpy"
-    set_condition: base_installed  # Sets this condition after processing
-
-  - name: "Optional Package"
-    type: pip_package
-    source: pip
-    package: "scipy"
-    match_condition: base_installed  # Only processes if base_installed condition is set
-```
-
-The `set_condition` field supports both single strings and lists:
-
-```yaml
-# Single condition
-set_condition: my_condition
-
-# Multiple conditions
-set_condition:
-  - condition_one
-  - condition_two
-```
-
-## Use Cases
-
-### 1. Platform-Specific Packages
-
-Install different packages based on the installation type:
-
-```yaml
-items:
-  # Portable installation packages
-  - name: "Portable Python Package"
-    type: pip_package
-    source: pip
-    package: "some-package"
-    match_condition: comfyui_portable_install
-
-  # Git installation packages
-  - name: "Conda Python Package"
-    type: pip_package
-    source: pip
-    package: "some-package"
-    match_condition: comfyui_git_install
-```
-
-### 2. Dependency Chains
-
-Create dependencies between items:
-
-```yaml
-items:
-  - name: "Core Library"
-    type: pip_package
-    source: pip
-    package: "core-lib"
-    set_condition: core_ready
-
-  - name: "Plugin A"
-    type: pip_package
-    source: pip
-    package: "plugin-a"
-    match_condition: core_ready
-
-  - name: "Plugin B"
-    type: pip_package
-    source: pip
-    package: "plugin-b"
-    match_condition: core_ready
-```
-
-### 3. Optional Feature Groups
-
-Allow users to selectively install feature groups:
+### Command Line Conditions
+- Custom conditions can be set via `--set-condition` flag (can be used multiple times)
 
 ```bash
-# Install with CUDA support
-python ModularInstaller.py -m manifest.yaml --set-condition cuda_support
-
-# Install with CPU-only support
-python ModularInstaller.py -m manifest.yaml --set-condition cpu_only
+python ModularInstaller.py -m manifest.yaml --set-condition cuda_support --set-condition high_vram
 ```
+
+## Manifest Syntax
+
+### Basic Structure
 
 ```yaml
 items:
-  - name: "PyTorch CUDA"
+  - name: "Item Name"
+    type: pip_package
+    source: pip
+    package: "package-name"
+    conditions:
+      match_type: any  # Options: [any, all] (default: any)
+      match_conditions:
+        - condition: os_windows
+        - condition: comfyui_git_install
+      set_conditions:
+        - condition: dependencies_installed
+          set_condition_when: installed  # Options: [installed, always] (default: installed)
+```
+
+### Field Descriptions
+
+#### `match_type` (Optional, default: "any")
+Determines how multiple match conditions are evaluated:
+- **`any`** - Item installs if ANY condition is met (OR logic) - **DEFAULT**
+- **`all`** - Item installs if ALL conditions are met (AND logic)
+
+#### `match_conditions` (Optional)
+List of conditions that must be met for the item to be processed. Each can be:
+- Simple string: `- condition: os_windows`
+- Dict format: `- { condition: os_windows }`
+
+If no match_conditions are specified, the item always processes.
+
+#### `set_conditions` (Optional)
+List of conditions to set after processing this item. Each entry can specify:
+- **`condition`** - Name of the condition to set
+- **`set_condition_when`** - When to set the condition:
+  - **`installed`** (default) - Only set if item was actually installed (not skipped)
+  - **`always`** - Set even if item was skipped (already exists)
+
+## Examples
+
+### Example 1: OS-Specific Installations
+
+Install different packages based on the operating system:
+
+```yaml
+items:
+  # Windows-only: Install Visual C++ Redistributable
+  - name: Microsoft.VCRedist.2015+.x64
+    type: application
+    source: winget
+    package_id: Microsoft.VCRedist.2015+.x64
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_windows
+
+  # Linux-only: System dependencies message
+  - name: "Linux System Dependencies"
+    type: file
+    source: local
+    source_path: "docs/linux-deps.txt"
+    path: "README-LINUX.txt"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_linux
+
+  # macOS-only: Homebrew dependencies
+  - name: "macOS Setup Instructions"
+    type: file
+    source: local
+    source_path: "docs/macos-setup.txt"
+    path: "README-MACOS.txt"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_mac
+```
+
+### Example 2: Installation Method-Specific Packages
+
+Install different PyTorch versions based on installation type:
+
+```yaml
+items:
+  # Git installation: CUDA-enabled PyTorch
+  - name: "PyTorch CUDA 13.0"
     type: pip_package
     source: pip
     package: "torch"
+    version: "2.5.1"
     extra_index_url: "https://download.pytorch.org/whl/cu130"
-    match_condition: cuda_support
+    uninstall_current: true
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: comfyui_git_install
 
+  # Portable installation: CPU-only PyTorch
   - name: "PyTorch CPU"
     type: pip_package
     source: pip
     package: "torch"
-    match_condition: cpu_only
+    version: "2.5.1"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: comfyui_portable_install
 ```
 
-## Implementation Details
+### Example 3: Combined OS and Installation Type (AND Logic)
 
-### Condition Storage
+Install packages only when BOTH conditions are met:
 
-Conditions are stored as a Python `set` in the `ManifestHandler` instance. This ensures:
-- Fast lookup (O(1) for checking if a condition exists)
-- No duplicates
-- Order doesn't matter
+```yaml
+items:
+  # Windows + Git Install
+  - name: "Windows Git-Specific Package"
+    type: pip_package
+    source: pip
+    package: "windows-git-package"
+    conditions:
+      match_type: all  # Requires BOTH conditions
+      match_conditions:
+        - condition: os_windows
+        - condition: comfyui_git_install
 
-### Processing Order
-
-1. Items are processed in the order they appear in the manifest
-2. Before processing an item, `match_condition` is checked
-3. If the condition doesn't exist, the item is skipped
-4. After successfully processing an item (or if it's skipped because it already exists), `set_condition` is processed
-5. Conditions set by early items can affect later items in the same run
-
-### Skipped Items
-
-Items that are skipped due to missing conditions are logged with a message like:
-
+  # Linux + Portable Install (unlikely but demonstrates flexibility)
+  - name: "Linux Portable Package"
+    type: pip_package
+    source: pip
+    package: "linux-portable-package"
+    conditions:
+      match_type: all
+      match_conditions:
+        - condition: os_linux
+        - condition: comfyui_portable_install
 ```
-⊘ Skipping Item Name (condition not met: required_condition)
+
+### Example 4: Dependency Chains with set_condition_when
+
+Create installation dependencies where later items depend on earlier ones:
+
+```yaml
+items:
+  # Install core dependencies first
+  - name: "Core Dependencies"
+    type: pip_package
+    source: pip
+    package: "numpy"
+    version: "1.24.3"
+    conditions:
+      set_conditions:
+        - condition: core_installed
+          set_condition_when: installed  # Only if actually installed
+
+  # Plugin requires core to be installed
+  - name: "Advanced Plugin"
+    type: pip_package
+    source: pip
+    package: "advanced-plugin"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: core_installed  # Won't install unless core_installed is set
+      set_conditions:
+        - condition: plugin_ready
+          set_condition_when: installed
 ```
 
-## GUI Support
+### Example 5: Always Set Conditions
 
-The GUI automatically supports conditions through the config dictionary. The automatic `comfyui_git_install` condition is set when the "Install ComfyUI from GitHub using conda" checkbox is selected.
+Set conditions regardless of whether the item was installed or skipped:
 
-## Example Manifest
+```yaml
+items:
+  # Check if base model exists, set condition either way
+  - name: "SDXL Base Model"
+    type: model
+    source: huggingface
+    repo: "stabilityai/stable-diffusion-xl-base-1.0"
+    file: "sd_xl_base_1.0.safetensors"
+    path: "models/checkpoints/sd_xl_base_1.0.safetensors"
+    conditions:
+      set_conditions:
+        - condition: sdxl_available
+          set_condition_when: always  # Set even if file already exists
+
+  # Optional refiner, only if SDXL is available
+  - name: "SDXL Refiner"
+    type: model
+    source: huggingface
+    repo: "stabilityai/stable-diffusion-xl-refiner-1.0"
+    file: "sd_xl_refiner_1.0.safetensors"
+    path: "models/checkpoints/sd_xl_refiner_1.0.safetensors"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: sdxl_available
+```
+
+### Example 6: Custom Conditions from Command Line
+
+Combine automatic and custom conditions:
+
+```bash
+# Run with CUDA support flag
+python ModularInstaller.py -m manifest.yaml --set-condition cuda_support
+```
+
+```yaml
+items:
+  # Only install if user explicitly requests CUDA support
+  - name: "CUDA Toolkit Dependencies"
+    type: pip_package
+    source: pip
+    package: "nvidia-cuda-runtime-cu12"
+    conditions:
+      match_type: all
+      match_conditions:
+        - condition: os_windows
+        - condition: cuda_support  # From command line
+
+  # Install CPU fallback if CUDA NOT requested
+  - name: "CPU Optimized Libraries"
+    type: pip_package
+    source: pip
+    package: "openvino"
+    # No match_conditions = always installs if cuda_support isn't handled elsewhere
+```
+
+### Example 7: Platform-Specific Applications
+
+```yaml
+items:
+  # Windows package manager installs
+  - name: "Git for Windows"
+    type: application
+    source: winget
+    package_id: "Git.Git"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_windows
+      set_conditions:
+        - condition: git_installed
+          set_condition_when: installed
+
+  # Linux: Assumes git is installed via package manager
+  - name: "Git Check (Linux)"
+    type: file
+    source: bundled
+    path: ".git-installed"  # Marker file
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_linux
+      set_conditions:
+        - condition: git_installed
+          set_condition_when: always
+```
+
+### Example 8: Complex Multi-Condition Scenarios
+
+```yaml
+items:
+  # Windows + Git Install + CUDA Support
+  - name: "Full Windows CUDA Stack"
+    type: pip_package
+    source: pip
+    package: "torch torchvision torchaudio"
+    extra_index_url: "https://download.pytorch.org/whl/cu130"
+    conditions:
+      match_type: all  # Must meet ALL three conditions
+      match_conditions:
+        - condition: os_windows
+        - condition: comfyui_git_install
+        - condition: cuda_support
+
+  # Any platform + Git Install (no CUDA)
+  - name: "Cross-Platform CPU PyTorch"
+    type: pip_package
+    source: pip
+    package: "torch torchvision torchaudio"
+    conditions:
+      match_type: all
+      match_conditions:
+        - condition: comfyui_git_install
+      # Note: Explicitly NOT checking for cuda_support
+```
+
+## Use Cases
+
+### 1. Cross-Platform Packages
+Install platform-specific versions or configurations:
+- Different binary wheels for Windows/Linux/macOS
+- Platform-specific configuration files
+- OS-specific dependencies or prerequisites
+
+### 2. Installation Type Optimization
+Tailor packages to installation method:
+- CUDA PyTorch for git installs (assumes user has GPU)
+- CPU PyTorch for portable installs (broader compatibility)
+- Conda-specific packages vs pip packages
+
+### 3. Progressive Enhancement
+Build features progressively:
+- Core dependencies set conditions
+- Advanced features check for core conditions
+- Optional plugins require specific capabilities
+
+### 4. User-Driven Customization
+Let users choose features at install time:
+- `--set-condition professional` for pro features
+- `--set-condition minimal` for lightweight install
+- `--set-condition development` for dev tools
+
+### 5. Dependency Management
+Ensure correct installation order:
+- Base libraries installed first
+- Framework packages second
+- Application-specific packages last
+- Each sets conditions for the next
+
+## Best Practices
+
+### 1. Use Descriptive Condition Names
+```yaml
+# Good
+- condition: cuda_gpu_available
+- condition: professional_features_enabled
+
+# Avoid
+- condition: flag1
+- condition: temp_cond
+```
+
+### 2. Default to `match_type: any`
+Most use cases benefit from OR logic. Only use `all` when you truly need AND logic.
+
+### 3. Use `set_condition_when: installed` by Default
+Only use `always` when you need to set conditions for items that might already exist (like checking for existing files).
+
+### 4. Document Custom Conditions
+If your manifest uses custom conditions (via `--set-condition`), document them in the manifest metadata:
 
 ```yaml
 package:
-  name: "Conditional Example"
+  name: "My Package"
   version: "1.0.0"
+  description: "Install with --set-condition cuda_support for GPU acceleration"
+```
 
+### 5. Test All Branches
+Test your manifest with different combinations:
+- Each OS platform
+- Git vs portable installation
+- With and without custom conditions
+
+### 6. Provide Fallbacks
+Always provide sensible defaults:
+
+```yaml
 items:
-  # Always installed
-  - name: "ComfyUI Manager"
-    type: custom_node
-    source: git
-    url: "https://github.com/ltdrdata/ComfyUI-Manager.git"
-    path: "custom_nodes/ComfyUI-Manager"
-    set_condition: manager_installed
+  # Preferred: CUDA version
+  - name: "PyTorch CUDA"
+    conditions:
+      match_conditions:
+        - condition: cuda_support
 
-  # Only for git installations
-  - name: "Conda Dependencies"
+  # Fallback: CPU version (no conditions = always installs if CUDA doesn't)
+  - name: "PyTorch CPU"
+    # Will be skipped if CUDA version already installed
+```
+
+## Troubleshooting
+
+### Item Not Installing
+
+**Check active conditions:**
+The installer logs active conditions at startup. Verify your expected conditions are set.
+
+**Check match_type:**
+- `match_type: all` requires ALL conditions
+- `match_type: any` requires ANY condition
+- Missing match_type defaults to `any`
+
+**Check condition spelling:**
+Condition names are case-sensitive:
+- ✓ `os_windows`
+- ✗ `OS_Windows`
+- ✗ `windows`
+
+### Condition Not Being Set
+
+**Check set_condition_when:**
+- `installed` (default) - Only if item was actually processed
+- `always` - Even if item was skipped
+
+**Check installation success:**
+If an item fails to install, conditions won't be set (even with `installed`).
+
+### Unexpected Behavior
+
+**Check condition order:**
+Conditions are evaluated in manifest order. Ensure dependencies are listed before dependents.
+
+**Check for condition conflicts:**
+Using `match_type: all` with conditions that can't both be true:
+```yaml
+# This will NEVER install (can't be both Windows and Linux)
+conditions:
+  match_type: all
+  match_conditions:
+    - condition: os_windows
+    - condition: os_linux
+```
+
+## Advanced Patterns
+
+### Feature Flags
+```yaml
+items:
+  # Enable feature with --set-condition experimental
+  - name: "Experimental Features"
     type: pip_package
     source: pip
-    package: "conda-specific-package"
-    match_condition: comfyui_git_install
-
-  # Only after manager is installed
-  - name: "Manager Plugin"
-    type: file
-    source: url
-    url: "https://example.com/plugin.json"
-    path: "custom_nodes/ComfyUI-Manager/plugin.json"
-    match_condition: manager_installed
+    package: "experimental-package"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: experimental
 ```
+
+### Cascade Conditions
+```yaml
+items:
+  - name: "Level 1"
+    conditions:
+      set_conditions:
+        - condition: level1_done
+          set_condition_when: installed
+
+  - name: "Level 2"
+    conditions:
+      match_conditions:
+        - condition: level1_done
+      set_conditions:
+        - condition: level2_done
+          set_condition_when: installed
+
+  - name: "Level 3"
+    conditions:
+      match_conditions:
+        - condition: level2_done
+```
+
+### Mutual Exclusion
+```yaml
+items:
+  # Either CUDA...
+  - name: "CUDA Backend"
+    conditions:
+      match_conditions:
+        - condition: use_cuda
+      set_conditions:
+        - condition: backend_configured
+          set_condition_when: installed
+
+  # ...OR CPU
+  - name: "CPU Backend"
+    conditions:
+      match_conditions:
+        - condition: use_cpu
+      set_conditions:
+        - condition: backend_configured
+          set_condition_when: installed
+```
+
+## Reference
+
+### Automatic Conditions Summary
+
+| Condition | When Set | Description |
+|-----------|----------|-------------|
+| `os_windows` | Always on Windows | Windows operating system |
+| `os_linux` | Always on Linux | Linux operating system |
+| `os_mac` | Always on macOS | macOS (recommended name) |
+| `os_darwin` | Always on macOS | macOS (alternative name) |
+| `comfyui_git_install` | Git-based install | Conda environment install |
+| `comfyui_portable_install` | Portable install | Windows portable install |
+
+### match_type Values
+
+| Value | Logic | When Item Installs |
+|-------|-------|-------------------|
+| `any` (default) | OR | If ANY match_condition is met |
+| `all` | AND | If ALL match_conditions are met |
+
+### set_condition_when Values
+
+| Value | When Condition Is Set |
+|-------|----------------------|
+| `installed` (default) | Only if item was actually installed |
+| `always` | Even if item was skipped (already exists) |
+
+## See Also
+
+- README.md - Main documentation with manifest format
+- Example manifests in the repository
+- `--list-contents` flag to preview what would be installed
+- `--dry-run` flag to test conditional logic without installing
