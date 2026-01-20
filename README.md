@@ -4,23 +4,31 @@
 The ComfyUI Modular Installer is a manifest-driven system for installing ComfyUI models, custom nodes, and assets. It uses declarative manifest files to specify what should be downloaded and where, supporting multiple sources including HuggingFace, Git repositories, direct URLs, and local files.
 
 ### Key Features
-- **Automatic ComfyUI Installation**: Automatically downloads and installs ComfyUI portable on Windows
+- **Cross-Platform Installation**: Git-based ComfyUI installation with conda environments (Windows/Linux/Mac) or Windows portable installation
+- **Conda Environment Management**: Automatic miniconda installation and Python 3.13 environment setup for git-based installs
 - **Blender Integration**: Auto-install Blender 4.5 LTS via winget (Windows only)
 - **GUI and CLI modes**: Choose between graphical interface or command-line operation
 - **Manifest-driven**: Declare all dependencies in a single JSON/YAML file
-- **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, and pip packages
+- **Multiple sources**: HuggingFace Hub, Git repositories, direct URLs, local files, pip packages, winget, and bundled files
+- **Conditional Processing**: Install different packages based on runtime conditions (e.g., git vs portable install)
+- **Advanced Pip Support**: Custom index URLs, uninstall options, and flexible pip arguments
 - **Flexible path management**: Install to ComfyUI, home directory, temp, or absolute paths
-- **Embedded Python support**: Automatically uses ComfyUI's embedded Python for package installations
+- **Embedded Python support**: Automatically uses ComfyUI's embedded Python or conda environment for package installations
 - **Smart caching**: Skip already-downloaded files and verify checksums
 - **Parallel downloads**: Download multiple items simultaneously for faster installation
 - **Resume capability**: Continue interrupted downloads from where they left off
 - **Bundled packages**: Include files directly in ZIP packages alongside the manifest
+- **PyInstaller Ready**: Build standalone executables with bundled packages
 
 ## Prerequisites
-1. Git (for cloning custom node repositories)
-2. Python 3.8 or higher (for the installer itself; ComfyUI portable includes embedded Python)
-3. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
-4. Windows (for auto-installation feature; manual ComfyUI installation required on Linux/Mac)
+1. Python 3.8 or higher (for the installer itself)
+2. Git (automatically installed on Windows via winget; manual installation required on Linux/Mac)
+3. Optional: Miniconda (automatically installed on Windows for git-based ComfyUI; manual installation recommended on Linux)
+4. Optional: HuggingFace token for gated models (set `HF_TOKEN` environment variable)
+
+**Note on ComfyUI Installation:**
+- **Windows**: Supports both portable installation (embedded Python) and git-based installation (conda environment)
+- **Linux/Mac**: Git-based installation with conda is the default and recommended method
 
 ## Installation
 1. Clone this repository:
@@ -64,6 +72,35 @@ The installer will:
 4. Prompt to install Blender 4.5 LTS (used for 3D workflows)
 5. Use embedded Python for all package installations
 
+### Git-Based Installation (Cross-Platform)
+
+Install ComfyUI from GitHub using conda environment for a clean, isolated Python setup:
+
+```bash
+# Installs ComfyUI via git with conda environment
+python ModularInstaller.py -m manifest.json --git-install-comfyui
+```
+
+**Linux Default:** On Linux systems, git-based installation is the default method.
+
+The installer will:
+1. Check/install miniconda if needed:
+   - **Windows**: `winget install miniconda3 --source winget`
+   - **Linux**: Downloads and runs Miniconda installer script
+2. Create `comfyui_bp` conda environment with Python 3.13
+3. Clone ComfyUI from https://github.com/Comfy-Org/ComfyUI.git
+4. Set environment variables:
+   - `COMFYUI_BASE`: Installation path (e.g., `~/ComfyUI_BP`)
+   - `COMFYUI_PYTHON`: Path to conda Python executable
+   - `COMFYUI_PYTHON_TYPE`: Set to `conda` (vs `embedded` for portable)
+
+**Advantages:**
+- **Cross-platform**: Works on Windows, Linux, and Mac
+- **Clean environment**: Isolated Python 3.13 with conda
+- **Up-to-date**: Always installs latest ComfyUI from GitHub
+- **Easy updates**: Simple `git pull` to update
+- **Package management**: Full conda and pip support
+
 ### Manual ComfyUI Path
 If you have ComfyUI installed elsewhere:
 
@@ -92,8 +129,10 @@ python ModularInstaller.py -m manifest.json --dry-run
 **Installation Options:**
 - **`-c, --comfy_path PATH`** - Path to ComfyUI installation (default: auto-install to ~/ComfyUI_BP/ComfyUI)
 - **`--install-path PATH`** - Custom installation path for ComfyUI portable (default: ~/ComfyUI_BP)
+- **`--git-install-comfyui`** - Install ComfyUI from GitHub using conda environment (default on Linux)
 - **`--no-auto-install`** - Disable automatic ComfyUI installation if not found
 - **`--skip-blender`** - Skip Blender 4.5 LTS installation (Windows only)
+- **`--set-condition COND`** - Set a condition for conditional manifest processing (can be used multiple times)
 - **`--gui`** - Launch graphical installer interface
 
 **Download Options:**
@@ -268,8 +307,9 @@ Files included in the ZIP package (extracted automatically):
 
 #### 6. Pip Package
 
-Install Python packages via pip:
+Install Python packages via pip with advanced options:
 
+**Basic Installation:**
 ```json
 {
   "name": "OpenCV",
@@ -281,9 +321,122 @@ Install Python packages via pip:
 }
 ```
 
+**Advanced PyTorch with Custom Index:**
+```json
+{
+  "name": "PyTorch CUDA 13.0",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "torch",
+  "version": "2.5.1",
+  "extra_index_url": "https://download.pytorch.org/whl/cu130",
+  "uninstall_current": true
+}
+```
+
+**With Custom Pip Arguments:**
+```json
+{
+  "name": "Package with Options",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "some-package",
+  "pip_args": "--no-deps --force-reinstall"
+}
+```
+
+**Uninstall Only:**
+```json
+{
+  "name": "Remove Old Package",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "old-package",
+  "uninstall_only": true
+}
+```
+
 **Fields:**
-- `package` - Package name on PyPI
+- `package` - Package name on PyPI or path to wheel file
 - `version` - (Optional) Specific version to install
+- `index_url` - (Optional) Replace PyPI with custom index (use `extra_index_url` instead for PyTorch)
+- `extra_index_url` - (Optional) Additional index URL (e.g., PyTorch CUDA wheels)
+- `find_links` - (Optional) Additional URLs to search for packages
+- `pip_args` - (Optional) Additional pip arguments (string or list)
+- `uninstall_current` - (Optional) Uninstall current version before installing (default: false)
+- `uninstall_only` - (Optional) Only uninstall, don't install (default: false)
+
+**Important for PyTorch:** Use `extra_index_url` not `index_url` to add PyTorch's index alongside PyPI, allowing PyTorch and other packages to install correctly.
+
+#### 7. InstallTemp (Bundled Packages)
+
+Reference files bundled in the ZIP package's `InstallTemp/` folder:
+
+```json
+{
+  "name": "Bundled Wheel Package",
+  "type": "pip_package",
+  "source": "install_temp",
+  "source_path": "wheels/custom_package-1.0.0-py3-none-any.whl"
+}
+```
+
+Or copy bundled files:
+
+```json
+{
+  "name": "Bundled Config",
+  "type": "file",
+  "source": "install_temp",
+  "source_path": "configs/settings.yaml",
+  "path": "user/settings.yaml"
+}
+```
+
+**Fields:**
+- `source_path` - Path relative to `InstallTemp/` folder in ZIP
+- `path` - Destination path (for files/directories, not pip packages)
+
+**Package Structure:**
+```
+package.zip
+├── manifest.json
+├── InstallTemp/              # Bundled files referenced by manifest
+│   ├── wheels/
+│   │   └── package.whl
+│   └── configs/
+│       └── settings.yaml
+└── ComfyUI/                  # Files extracted directly to ComfyUI
+    └── user/
+        └── workflows/
+```
+
+**Note:** `InstallTemp` items are always copied/installed, even if destination exists. Use for authoritative bundled content.
+
+#### 8. Winget (Windows Package Manager)
+
+Install Windows applications via winget:
+
+```json
+{
+  "name": "Visual Studio Code",
+  "type": "application",
+  "source": "winget",
+  "package_id": "Microsoft.VisualStudioCode",
+  "winget_source": "winget",
+  "silent": true,
+  "accept_agreements": true,
+  "required": false
+}
+```
+
+**Fields:**
+- `package_id` - Winget package ID (e.g., "Git.Git", "Microsoft.VisualStudioCode")
+- `winget_source` - (Optional) Source name (default: "winget", can be "msstore")
+- `silent` - (Optional) Silent installation (default: true)
+- `accept_agreements` - (Optional) Auto-accept agreements (default: true)
+
+**Note:** Automatically skipped on non-Windows platforms.
 
 ### Common Fields
 
@@ -299,8 +452,11 @@ All items support these fields:
   - `temp` - Install to temporary directory
   - `appdata` - Install to application data directory
   - `absolute` - Use absolute path (path must be absolute)
+  - `install_temp` - Install relative to InstallTemp folder (for bundled packages)
 - **`required`** (optional) - If `true`, installation fails if this item fails
 - **`size_mb`** (optional) - Size in megabytes (for display purposes)
+- **`match_condition`** (optional) - Condition that must exist for item to be processed
+- **`set_condition`** (optional) - Condition(s) to add after processing item (string or list)
 
 #### Path Base Examples
 
@@ -322,20 +478,121 @@ All items support these fields:
 }
 ```
 
+### Conditional Processing
+
+Install different packages based on runtime conditions. Conditions can be set via command line or automatically based on installation type.
+
+#### Automatic Conditions
+
+- **`comfyui_git_install`** - Set automatically when using `--git-install-comfyui` or on Linux (default)
+- Custom conditions can be set via `--set-condition` flag
+
+#### Setting Conditions from Command Line
+
+```bash
+# Set custom conditions
+python ModularInstaller.py -m manifest.json --set-condition cuda_support
+
+# Multiple conditions
+python ModularInstaller.py -m manifest.json --set-condition cuda_support --set-condition high_vram
+```
+
+#### Using match_condition
+
+Items with `match_condition` only install if that condition exists:
+
+```json
+{
+  "name": "PyTorch CUDA (Git Install Only)",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "torch",
+  "extra_index_url": "https://download.pytorch.org/whl/cu130",
+  "match_condition": "comfyui_git_install"
+}
+```
+
+This package only installs when using git-based ComfyUI installation.
+
+#### Using set_condition
+
+Items with `set_condition` add conditions after processing:
+
+```json
+{
+  "name": "Core Dependencies",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "numpy",
+  "set_condition": "core_installed"
+},
+{
+  "name": "Optional Plugin",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "plugin-package",
+  "match_condition": "core_installed"
+}
+```
+
+The plugin only installs after core dependencies are processed.
+
+#### Multiple Conditions
+
+Use lists for multiple conditions:
+
+```json
+{
+  "name": "Multi-Condition Item",
+  "type": "pip_package",
+  "source": "pip",
+  "package": "package-name",
+  "set_condition": ["condition1", "condition2"]
+}
+```
+
+#### Example: Platform-Specific Packages
+
+```json
+{
+  "items": [
+    {
+      "name": "PyTorch CPU (Portable Install)",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "torch",
+      "match_condition": "comfyui_portable_install"
+    },
+    {
+      "name": "PyTorch CUDA (Git Install)",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "torch",
+      "extra_index_url": "https://download.pytorch.org/whl/cu130",
+      "match_condition": "comfyui_git_install"
+    }
+  ]
+}
+```
+
+**See CONDITIONAL_PROCESSING.md for comprehensive examples and use cases.**
+
 ## Complete Example Manifest
+
+This example demonstrates various features including conditional processing, advanced pip options, and different source types:
 
 ```json
 {
   "package": {
     "name": "SDXL Complete Setup",
     "version": "1.0.0",
-    "description": "Full SDXL setup with custom nodes"
+    "description": "Full SDXL setup with custom nodes and conditional PyTorch"
   },
   "metadata": {
     "total_size_mb": 15000,
     "estimated_time": "10-15 minutes",
     "tags": ["sdxl", "upscaling"],
-    "details": "Includes SDXL base, refiner, VAE, and essential custom nodes"
+    "details": "Includes SDXL base, refiner, VAE, essential custom nodes, and platform-specific PyTorch"
   },
   "items": [
     {
@@ -345,8 +602,10 @@ All items support these fields:
       "repo": "stabilityai/stable-diffusion-xl-base-1.0",
       "file": "sd_xl_base_1.0.safetensors",
       "path": "models/checkpoints/sd_xl_base_1.0.safetensors",
+      "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
       "size_mb": 6938,
-      "required": true
+      "required": true,
+      "set_condition": "base_model_installed"
     },
     {
       "name": "SDXL Refiner 1.0",
@@ -356,7 +615,8 @@ All items support these fields:
       "file": "sd_xl_refiner_1.0.safetensors",
       "path": "models/checkpoints/sd_xl_refiner_1.0.safetensors",
       "size_mb": 6075,
-      "required": false
+      "required": false,
+      "match_condition": "base_model_installed"
     },
     {
       "name": "SDXL VAE",
@@ -388,16 +648,60 @@ All items support these fields:
       "required": false
     },
     {
+      "name": "PyTorch CUDA 13.0 (Git Install)",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "torch",
+      "version": "2.5.1",
+      "extra_index_url": "https://download.pytorch.org/whl/cu130",
+      "uninstall_current": true,
+      "match_condition": "comfyui_git_install",
+      "required": false
+    },
+    {
+      "name": "Torchvision CUDA 13.0 (Git Install)",
+      "type": "pip_package",
+      "source": "pip",
+      "package": "torchvision",
+      "version": "0.20.1",
+      "extra_index_url": "https://download.pytorch.org/whl/cu130",
+      "uninstall_current": true,
+      "match_condition": "comfyui_git_install",
+      "required": false
+    },
+    {
       "name": "NumPy",
       "type": "pip_package",
       "source": "pip",
       "package": "numpy",
       "version": "1.24.3",
       "required": false
+    },
+    {
+      "name": "Bundled Custom Wheel",
+      "type": "pip_package",
+      "source": "install_temp",
+      "source_path": "wheels/custom_package-1.0.0-py3-none-any.whl",
+      "required": false
+    },
+    {
+      "name": "Bundled Workflow",
+      "type": "file",
+      "source": "install_temp",
+      "source_path": "workflows/sdxl_workflow.json",
+      "path": "user/default/workflows/sdxl_workflow.json"
     }
   ]
 }
 ```
+
+**Conditional Features Demonstrated:**
+- `set_condition`: Base model sets a condition after installation
+- `match_condition`: Refiner only installs after base model
+- `comfyui_git_install`: PyTorch CUDA packages only for git-based installs
+- `uninstall_current`: Remove existing PyTorch before installing new version
+- `extra_index_url`: PyTorch CUDA wheels from custom index
+- `install_temp`: Bundled files from ZIP package
 
 ## Package Structure (ZIP)
 
@@ -406,19 +710,29 @@ When distributing as a ZIP package, use this structure:
 ```
 package.zip
 ├── manifest.json          # Required: Installation manifest
-└── ComfyUI/              # Optional: Bundled files
+├── InstallTemp/          # Optional: Files referenced by manifest
+│   ├── wheels/           # Bundled wheel packages
+│   │   └── package.whl
+│   ├── configs/          # Configuration files
+│   │   └── settings.yaml
+│   └── models/           # Small models (large models should be downloaded)
+│       └── small_model.safetensors
+└── ComfyUI/              # Optional: Files extracted directly
     ├── models/
     │   └── ...
     ├── custom_nodes/
     │   └── ...
     └── user/
-        └── ...
+        └── workflows/
+            └── workflow.json
 ```
 
 **Important:**
 - `manifest.json` must be at the root of the ZIP
-- Files in `ComfyUI/` folder are extracted directly to your ComfyUI installation
-- Reference bundled files in manifest with `"source": "bundled"`
+- `InstallTemp/` files are referenced in manifest with `"source": "install_temp"` and `source_path`
+- `ComfyUI/` folder contents are merged directly into your ComfyUI installation
+- Reference direct-extract files in manifest with `"source": "bundled"`
+- Keep InstallTemp small - use download sources for large models
 
 ## Usage Examples
 
@@ -709,6 +1023,383 @@ python ModularInstaller.py -c C:/ComfyUI -m manifest.json --no-verify
    ```bash
    python ModularInstaller.py -c /path/to/test/ComfyUI -m your_manifest.json --dry-run
    ```
+
+## Building Standalone Installers with PyInstaller
+
+You can create standalone executable installers that bundle your manifest and optional InstallTemp files for distribution.
+
+### Basic Setup
+
+1. **Install PyInstaller:**
+   ```bash
+   pip install pyinstaller
+   ```
+
+2. **Create your package structure:**
+   ```
+   MyComfyUISetup/
+   ├── package.zip              # Your package (manifest + optional InstallTemp)
+   │   ├── manifest.json        # Required
+   │   └── InstallTemp/         # Optional bundled files
+   │       └── wheels/
+   │           └── package.whl
+   ├── ModularInstaller.py      # From this repo
+   ├── core/                    # From this repo
+   │   ├── __init__.py
+   │   ├── manifest_handler.py
+   │   ├── comfyui_installer.py
+   │   ├── installer_gui.py
+   │   └── ...
+   └── requirements.txt         # From this repo
+   ```
+
+### Building the Installer
+
+#### Option 1: Bundled Package (Recommended)
+
+Bundle your `package.zip` inside the executable:
+
+```bash
+pyinstaller --noconfirm --onefile --windowed \
+  --name "MyComfyUIInstaller" \
+  --add-data "package.zip;." \
+  --hidden-import=core.manifest_handler \
+  --hidden-import=core.comfyui_installer \
+  --hidden-import=core.installer_gui \
+  --hidden-import=qtpy \
+  --collect-all qtpy \
+  --icon=icon.ico \
+  ModularInstaller.py
+```
+
+**On Linux/Mac:**
+```bash
+pyinstaller --noconfirm --onefile --windowed \
+  --name "MyComfyUIInstaller" \
+  --add-data "package.zip:." \
+  --hidden-import=core.manifest_handler \
+  --hidden-import=core.comfyui_installer \
+  --hidden-import=core.installer_gui \
+  --hidden-import=qtpy \
+  --collect-all qtpy \
+  ModularInstaller.py
+```
+
+The installer automatically:
+- Detects frozen executable mode
+- Launches in GUI mode
+- Looks for bundled `package.zip` in `sys._MEIPASS` (PyInstaller temp dir)
+- Falls back to external `package.zip` in same directory as exe
+
+#### Option 2: External Package
+
+Build executable without bundled package (user provides package.zip):
+
+```bash
+pyinstaller --noconfirm --onefile --windowed \
+  --name "ModularInstaller" \
+  --hidden-import=core.manifest_handler \
+  --hidden-import=core.comfyui_installer \
+  --hidden-import=core.installer_gui \
+  --hidden-import=qtpy \
+  --collect-all qtpy \
+  --icon=icon.ico \
+  ModularInstaller.py
+```
+
+Users run: `ModularInstaller.exe` (launches GUI with file picker)
+
+#### Option 3: PyInstaller Spec File (Advanced)
+
+Create `installer.spec` for more control:
+
+```python
+# -*- mode: python ; coding: utf-8 -*-
+
+block_cipher = None
+
+a = Analysis(
+    ['ModularInstaller.py'],
+    pathex=[],
+    binaries=[],
+    datas=[('package.zip', '.')],  # Bundle package.zip
+    hiddenimports=[
+        'core.manifest_handler',
+        'core.comfyui_installer',
+        'core.installer_gui',
+        'core.package_manager',
+        'qtpy',
+        'PySide6',  # Or PyQt5
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    win_no_prefer_redirects=False,
+    win_private_assemblies=False,
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+# Collect all qtpy files
+from PyInstaller.utils.hooks import collect_all
+qtpy_datas, qtpy_binaries, qtpy_hiddenimports = collect_all('qtpy')
+a.datas += qtpy_datas
+a.binaries += qtpy_binaries
+a.hiddenimports += qtpy_hiddenimports
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='MyComfyUIInstaller',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    console=False,  # Windowed mode (no console)
+    disable_windowing_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon='icon.ico'  # Optional: Add custom icon
+)
+```
+
+Build with:
+```bash
+pyinstaller installer.spec
+```
+
+### PyInstaller Best Practices
+
+#### 1. Hidden Imports
+
+ModularInstaller requires these hidden imports:
+```python
+hiddenimports=[
+    'core.manifest_handler',
+    'core.comfyui_installer',
+    'core.installer_gui',
+    'core.package_manager',
+    'qtpy',
+    'yaml',
+    'requests',
+    'huggingface_hub',
+]
+```
+
+#### 2. Qt Bindings
+
+The installer uses `qtpy` for Qt compatibility. Include Qt files:
+```bash
+--collect-all qtpy
+```
+
+Or specify your Qt backend:
+```bash
+--collect-all PySide6
+# OR
+--collect-all PyQt5
+```
+
+#### 3. Data Files
+
+Bundle your package and any additional resources:
+```python
+# Windows
+datas=[
+    ('package.zip', '.'),
+    ('icon.ico', '.'),
+    ('README.txt', '.'),
+]
+
+# Linux/Mac - use ':' instead of ';'
+datas=[
+    ('package.zip', '.'),
+    ('icon.png', '.'),
+    ('README.txt', '.'),
+]
+```
+
+#### 4. Reducing Executable Size
+
+Exclude unnecessary modules:
+```python
+excludes=[
+    'matplotlib',
+    'pandas',
+    'scipy',
+    'PIL',
+    'tkinter',
+]
+```
+
+Use UPX compression:
+```bash
+--upx-dir=/path/to/upx
+```
+
+#### 5. Icon
+
+Add a custom icon (Windows `.ico`, Linux/Mac `.png`):
+```bash
+--icon=icon.ico
+```
+
+### Package Distribution Structure
+
+**Internal Bundle (Recommended):**
+```
+MyComfyUIInstaller.exe     # Everything in one file
+```
+
+**External Package:**
+```
+dist/
+├── MyComfyUIInstaller.exe
+└── package.zip             # User can replace with custom package
+```
+
+**With InstallTemp:**
+
+Your `package.zip` structure:
+```
+package.zip
+├── manifest.json
+└── InstallTemp/
+    ├── wheels/
+    │   ├── custom_package1.whl
+    │   └── custom_package2.whl
+    ├── configs/
+    │   └── settings.yaml
+    └── models/
+        └── small_model.safetensors
+```
+
+Large files (models, checkpoints) should be downloaded via manifest, not bundled in InstallTemp.
+
+### Testing Your Build
+
+1. **Test the executable:**
+   ```bash
+   # Windows
+   dist\MyComfyUIInstaller.exe
+
+   # Linux/Mac
+   ./dist/MyComfyUIInstaller
+   ```
+
+2. **Test on clean system:**
+   - No Python installed
+   - No dependencies installed
+   - Different Windows versions (7, 10, 11)
+   - Different Linux distributions
+
+3. **Verify bundled package:**
+   - Check that GUI opens automatically
+   - Verify package.zip is detected
+   - Test installation flow
+
+### Common Issues and Solutions
+
+**Issue:** `FileNotFoundError: package.zip`
+- **Solution:** Ensure package.zip is in `--add-data` list or next to executable
+
+**Issue:** `ModuleNotFoundError: qtpy`
+- **Solution:** Add `--collect-all qtpy` and ensure PySide6/PyQt5 installed
+
+**Issue:** `Import error: No module named 'core.manifest_handler'`
+- **Solution:** Add all core modules to `hiddenimports`
+
+**Issue:** Large executable size (>100MB)
+- **Solution:** Use `--exclude` for unused modules, enable UPX compression
+
+**Issue:** Antivirus false positives
+- **Solution:** Code sign your executable (requires certificate)
+
+### Advanced: Code Signing (Windows)
+
+Sign your executable to avoid SmartScreen warnings:
+
+```bash
+# Using signtool (Windows SDK)
+signtool sign /f certificate.pfx /p password /tr http://timestamp.digicert.com /td sha256 /fd sha256 MyComfyUIInstaller.exe
+```
+
+Or use a cloud signing service like:
+- DigiCert
+- GlobalSign
+- Sectigo
+
+### Example: Complete Build Script
+
+**build_installer.bat** (Windows):
+```batch
+@echo off
+echo Building ModularInstaller...
+
+REM Clean previous builds
+rmdir /s /q build dist
+
+REM Build with PyInstaller
+pyinstaller --noconfirm --onefile --windowed ^
+  --name "MyComfyUISetup" ^
+  --add-data "package.zip;." ^
+  --hidden-import=core.manifest_handler ^
+  --hidden-import=core.comfyui_installer ^
+  --hidden-import=core.installer_gui ^
+  --hidden-import=core.package_manager ^
+  --collect-all qtpy ^
+  --icon=icon.ico ^
+  --upx-dir=C:\upx ^
+  ModularInstaller.py
+
+echo.
+echo Build complete! Executable at: dist\MyComfyUISetup.exe
+pause
+```
+
+**build_installer.sh** (Linux/Mac):
+```bash
+#!/bin/bash
+echo "Building ModularInstaller..."
+
+# Clean previous builds
+rm -rf build dist
+
+# Build with PyInstaller
+pyinstaller --noconfirm --onefile --windowed \
+  --name "MyComfyUISetup" \
+  --add-data "package.zip:." \
+  --hidden-import=core.manifest_handler \
+  --hidden-import=core.comfyui_installer \
+  --hidden-import=core.installer_gui \
+  --hidden-import=core.package_manager \
+  --collect-all qtpy \
+  ModularInstaller.py
+
+echo ""
+echo "Build complete! Executable at: dist/MyComfyUISetup"
+```
+
+### Distributing Your Installer
+
+1. **GitHub Releases:** Upload `.exe` with release notes
+2. **Direct download:** Host on website with SHA256 checksums
+3. **With documentation:** Include README with:
+   - System requirements
+   - Installation steps
+   - Troubleshooting
+   - License information
 
 ## Contributing
 
