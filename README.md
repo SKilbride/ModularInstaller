@@ -194,11 +194,30 @@ Each item in the `items` array represents something to install:
 | `model` | Model files (checkpoints, LoRAs, VAE, etc.) |
 | `custom_node` | ComfyUI custom nodes (typically Git repositories) |
 | `file` | Generic file to download |
-| `directory` | Directory to download/clone |
+| `directory` | Directory to download/clone (use with Git for non-custom-node repos) |
 | `pip_package` | Python package to install via pip |
 | `config` | Configuration file |
+| `application` | Windows application (via winget) |
+
+### Path Base Options
+
+The `path_base` field determines where files are installed relative to a base directory:
+
+| Path Base | Description | Example Result |
+|-----------|-------------|----------------|
+| `comfyui` (default) | Relative to ComfyUI installation directory | `~/ComfyUI_BP/ComfyUI/models/checkpoints/model.safetensors` |
+| `home` | Relative to user home directory | `~/my-folder/file.txt` |
+| `temp` | System temporary directory | `/tmp/file.txt` (Linux) or `%TEMP%\file.txt` (Windows) |
+| `appdata` | Application data directory | `~/.local/share/app/` (Linux), `~/Library/Application Support/` (Mac), `%APPDATA%\app\` (Windows) |
+| `absolute` | Use path as-is (must be absolute path) | `/opt/shared/model.safetensors` |
+| `install_temp` | Relative to InstallTemp folder in ZIP package | Used for bundled files referenced by manifest |
+
+**Default:** If `path_base` is not specified, it defaults to `comfyui`.
 
 ### Source Types
+
+<details>
+<summary><strong>1. HuggingFace Hub</strong> - Download files from HuggingFace repositories</summary>
 
 #### 1. HuggingFace Hub
 
@@ -223,13 +242,19 @@ Download files from HuggingFace repositories:
 - `repo` - HuggingFace repository ID (e.g., "username/repo-name")
 - `file` - Filename in the repository
 - `path` - Destination path relative to ComfyUI directory
+- `path_base` - (Optional) Base path type (default: `comfyui`)
 - `remote_path` - (Optional) If file is in a subdirectory, full path like "repo/tree/main/subfolder"
 - `gated` - (Optional) Set to `true` if model requires license acceptance
 - `sha256` or `sha` - (Optional) SHA256 checksum for verification
 
+</details>
+
+<details>
+<summary><strong>2. Git Repository</strong> - Clone Git repositories for custom nodes and other tools</summary>
+
 #### 2. Git Repository
 
-Clone Git repositories (perfect for custom nodes):
+**Example 1: Custom Node (default ComfyUI location)**
 
 ```json
 {
@@ -238,17 +263,57 @@ Clone Git repositories (perfect for custom nodes):
   "source": "git",
   "url": "https://github.com/ltdrdata/ComfyUI-Manager.git",
   "path": "custom_nodes/ComfyUI-Manager",
+  "path_base": "comfyui",
   "ref": "main",
   "install_requirements": true,
   "required": true
 }
 ```
 
+**Example 2: Clone Repository to Custom Location (directory type)**
+
+Use `type: "directory"` for non-custom-node repositories:
+
+```json
+{
+  "name": "Stable Diffusion WebUI",
+  "type": "directory",
+  "source": "git",
+  "url": "https://github.com/AUTOMATIC1111/stable-diffusion-webui.git",
+  "path": "stable-diffusion-webui",
+  "path_base": "home",
+  "ref": "master",
+  "required": false
+}
+```
+
+This installs to `~/stable-diffusion-webui/`.
+
+**Example 3: Clone to Absolute Path**
+
+```json
+{
+  "name": "Shared Repository",
+  "type": "directory",
+  "source": "git",
+  "url": "https://github.com/user/shared-repo.git",
+  "path": "/opt/shared/repo",
+  "path_base": "absolute",
+  "ref": "main"
+}
+```
+
 **Fields:**
 - `url` - Git repository URL
-- `path` - Destination path relative to ComfyUI directory
+- `path` - Destination path (relative to path_base)
+- `path_base` - (Optional) Base path type (default: `comfyui`)
 - `ref` - (Optional) Branch, tag, or commit (default: "main")
 - `install_requirements` - (Optional) Run `pip install -r requirements.txt` after cloning
+
+</details>
+
+<details>
+<summary><strong>3. Direct URL</strong> - Download files from direct URLs</summary>
 
 #### 3. Direct URL
 
@@ -268,9 +333,15 @@ Download files from direct URLs:
 
 **Fields:**
 - `url` - Direct download URL
-- `path` - Destination path relative to ComfyUI directory
+- `path` - Destination path (relative to path_base)
+- `path_base` - (Optional) Base path type (default: `comfyui`)
 - `executable` - (Optional) Make file executable after download (Linux/Mac)
 - `sha256` or `sha` - (Optional) SHA256 checksum for verification
+
+</details>
+
+<details>
+<summary><strong>4. Local File</strong> - Copy files from local filesystem</summary>
 
 #### 4. Local File
 
@@ -288,7 +359,13 @@ Copy files from local filesystem:
 
 **Fields:**
 - `source_path` - Path to source file or directory
-- `path` - Destination path relative to ComfyUI directory
+- `path` - Destination path (relative to path_base)
+- `path_base` - (Optional) Base path type (default: `comfyui`)
+
+</details>
+
+<details>
+<summary><strong>5. Bundled in ZIP</strong> - Files included in ZIP package (extracted automatically)</summary>
 
 #### 5. Bundled in ZIP
 
@@ -304,6 +381,11 @@ Files included in the ZIP package (extracted automatically):
 ```
 
 **Note:** Bundled files are extracted from the ZIP's `ComfyUI/` folder structure.
+
+</details>
+
+<details>
+<summary><strong>6. Pip Package</strong> - Install Python packages via pip with advanced options</summary>
 
 #### 6. Pip Package
 
@@ -368,9 +450,16 @@ Install Python packages via pip with advanced options:
 
 **Important for PyTorch:** Use `extra_index_url` not `index_url` to add PyTorch's index alongside PyPI, allowing PyTorch and other packages to install correctly.
 
+</details>
+
+<details>
+<summary><strong>7. InstallTemp (Bundled Packages)</strong> - Reference files bundled in ZIP's InstallTemp folder</summary>
+
 #### 7. InstallTemp (Bundled Packages)
 
-Reference files bundled in the ZIP package's `InstallTemp/` folder:
+Reference files bundled in the ZIP package's `InstallTemp/` folder.
+
+**Example 1: Bundled Wheel Package**
 
 ```json
 {
@@ -381,7 +470,7 @@ Reference files bundled in the ZIP package's `InstallTemp/` folder:
 }
 ```
 
-Or copy bundled files:
+**Example 2: Copy Bundled File**
 
 ```json
 {
@@ -389,13 +478,45 @@ Or copy bundled files:
   "type": "file",
   "source": "install_temp",
   "source_path": "configs/settings.yaml",
-  "path": "user/settings.yaml"
+  "path": "user/settings.yaml",
+  "path_base": "comfyui"
 }
 ```
 
+**Example 3: Copy Bundled Folder**
+
+```json
+{
+  "name": "Bundled Workflows",
+  "type": "directory",
+  "source": "install_temp",
+  "source_path": "workflows",
+  "path": "user/default/workflows",
+  "path_base": "comfyui"
+}
+```
+
+This copies the entire `InstallTemp/workflows/` folder to ComfyUI's `user/default/workflows/`.
+
+**Example 4: Copy to Custom Location**
+
+```json
+{
+  "name": "Shared Models",
+  "type": "directory",
+  "source": "install_temp",
+  "source_path": "models/shared",
+  "path": ".comfyui/shared-models",
+  "path_base": "home"
+}
+```
+
+This copies `InstallTemp/models/shared/` to `~/.comfyui/shared-models/`.
+
 **Fields:**
 - `source_path` - Path relative to `InstallTemp/` folder in ZIP
-- `path` - Destination path (for files/directories, not pip packages)
+- `path` - Destination path (relative to path_base, for files/directories only)
+- `path_base` - (Optional) Base path type (default: `comfyui`)
 
 **Package Structure:**
 ```
@@ -412,6 +533,11 @@ package.zip
 ```
 
 **Note:** `InstallTemp` items are always copied/installed, even if destination exists. Use for authoritative bundled content.
+
+</details>
+
+<details>
+<summary><strong>8. Winget (Windows Package Manager)</strong> - Install Windows applications via winget</summary>
 
 #### 8. Winget (Windows Package Manager)
 
@@ -438,6 +564,8 @@ Install Windows applications via winget:
 
 **Note:** Automatically skipped on non-Windows platforms.
 
+</details>
+
 ### Common Fields
 
 All items support these fields:
@@ -458,25 +586,7 @@ All items support these fields:
 - **`match_condition`** (optional) - Condition that must exist for item to be processed
 - **`set_condition`** (optional) - Condition(s) to add after processing item (string or list)
 
-#### Path Base Examples
-
-```json
-{
-  "name": "SDXL Model",
-  "path": "models/checkpoints/sdxl.safetensors",
-  "path_base": "comfyui"  // Installs to ComfyUI/models/checkpoints/
-},
-{
-  "name": "User Config",
-  "path": ".comfyui/settings.json",
-  "path_base": "home"  // Installs to ~/. comfyui/settings.json
-},
-{
-  "name": "Shared Model",
-  "path": "/opt/models/shared/model.safetensors",
-  "path_base": "absolute"  // Installs to exact path
-}
-```
+**Note:** See the "Path Base Options" table above for detailed information on all path_base types and their behavior.
 
 ### Conditional Processing
 
