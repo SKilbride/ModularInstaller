@@ -583,109 +583,168 @@ All items support these fields:
   - `install_temp` - Install relative to InstallTemp folder (for bundled packages)
 - **`required`** (optional) - If `true`, installation fails if this item fails
 - **`size_mb`** (optional) - Size in megabytes (for display purposes)
-- **`match_condition`** (optional) - Condition that must exist for item to be processed
-- **`set_condition`** (optional) - Condition(s) to add after processing item (string or list)
+- **`conditions`** (optional) - Advanced conditional processing object (see below)
 
 **Note:** See the "Path Base Options" table above for detailed information on all path_base types and their behavior.
 
 ### Conditional Processing
 
-Install different packages based on runtime conditions. Conditions can be set via command line or automatically based on installation type.
+Install different packages based on runtime conditions with OS detection, AND/OR logic, and flexible condition timing.
 
 #### Automatic Conditions
 
-- **`comfyui_git_install`** - Set automatically when using `--git-install-comfyui` or on Linux (default)
-- Custom conditions can be set via `--set-condition` flag
+The installer automatically sets these conditions:
 
-#### Setting Conditions from Command Line
+**OS Detection:**
+- **`os_windows`** - Windows systems
+- **`os_linux`** - Linux systems
+- **`os_mac`** - macOS systems (recommended)
+- **`os_darwin`** - macOS systems (alternative)
+
+**Installation Type:**
+- **`comfyui_git_install`** - Git-based installation (conda environment)
+- **`comfyui_portable_install`** - Portable installation (Windows default)
+
+**Custom Conditions:**
+- Set via `--set-condition` flag (can be used multiple times)
+
+#### Conditions Structure
+
+```yaml
+items:
+  - name: "Item Name"
+    type: pip_package
+    source: pip
+    package: "package-name"
+    conditions:
+      match_type: any  # Options: [any, all] (default: any)
+      match_conditions:
+        - condition: os_windows
+        - condition: comfyui_git_install
+      set_conditions:
+        - condition: dependencies_installed
+          set_condition_when: installed  # Options: [installed, always] (default: installed)
+```
+
+**Field Descriptions:**
+
+- **`match_type`** - How to evaluate multiple conditions:
+  - `any` (default) - Install if ANY condition is met (OR logic)
+  - `all` - Install if ALL conditions are met (AND logic)
+
+- **`match_conditions`** - List of conditions that must be met
+  - Simple format: `- condition: os_windows`
+  - If omitted, item always processes
+
+- **`set_conditions`** - Conditions to set after processing
+  - **`condition`** - Condition name to set
+  - **`set_condition_when`** - When to set:
+    - `installed` (default) - Only if item was installed
+    - `always` - Even if item was skipped (already exists)
+
+#### Example 1: OS-Specific Packages
+
+```yaml
+items:
+  # Windows only
+  - name: Microsoft.VCRedist.2015+.x64
+    type: application
+    source: winget
+    package_id: Microsoft.VCRedist.2015+.x64
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_windows
+
+  # Linux only
+  - name: "Linux Dependencies"
+    type: pip_package
+    source: pip
+    package: "linux-package"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: os_linux
+```
+
+#### Example 2: Installation Type-Specific
+
+```yaml
+items:
+  # Git install: CUDA PyTorch
+  - name: "PyTorch CUDA"
+    type: pip_package
+    source: pip
+    package: "torch"
+    extra_index_url: "https://download.pytorch.org/whl/cu130"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: comfyui_git_install
+
+  # Portable install: CPU PyTorch
+  - name: "PyTorch CPU"
+    type: pip_package
+    source: pip
+    package: "torch"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: comfyui_portable_install
+```
+
+#### Example 3: Combined Conditions (AND Logic)
+
+```yaml
+items:
+  # Windows + Git Install (both required)
+  - name: "Windows Git Package"
+    type: pip_package
+    source: pip
+    package: "windows-git-package"
+    conditions:
+      match_type: all  # Requires BOTH
+      match_conditions:
+        - condition: os_windows
+        - condition: comfyui_git_install
+```
+
+#### Example 4: Dependency Chains
+
+```yaml
+items:
+  # Install core first
+  - name: "Core Dependencies"
+    type: pip_package
+    source: pip
+    package: "numpy"
+    conditions:
+      set_conditions:
+        - condition: core_installed
+          set_condition_when: installed
+
+  # Plugin requires core
+  - name: "Advanced Plugin"
+    type: pip_package
+    source: pip
+    package: "plugin"
+    conditions:
+      match_type: any
+      match_conditions:
+        - condition: core_installed
+```
+
+#### Command Line Conditions
 
 ```bash
 # Set custom conditions
-python ModularInstaller.py -m manifest.json --set-condition cuda_support
+python ModularInstaller.py -m manifest.yaml --set-condition cuda_support
 
 # Multiple conditions
-python ModularInstaller.py -m manifest.json --set-condition cuda_support --set-condition high_vram
+python ModularInstaller.py -m manifest.yaml --set-condition cuda_support --set-condition high_vram
 ```
 
-#### Using match_condition
-
-Items with `match_condition` only install if that condition exists:
-
-```json
-{
-  "name": "PyTorch CUDA (Git Install Only)",
-  "type": "pip_package",
-  "source": "pip",
-  "package": "torch",
-  "extra_index_url": "https://download.pytorch.org/whl/cu130",
-  "match_condition": "comfyui_git_install"
-}
-```
-
-This package only installs when using git-based ComfyUI installation.
-
-#### Using set_condition
-
-Items with `set_condition` add conditions after processing:
-
-```json
-{
-  "name": "Core Dependencies",
-  "type": "pip_package",
-  "source": "pip",
-  "package": "numpy",
-  "set_condition": "core_installed"
-},
-{
-  "name": "Optional Plugin",
-  "type": "pip_package",
-  "source": "pip",
-  "package": "plugin-package",
-  "match_condition": "core_installed"
-}
-```
-
-The plugin only installs after core dependencies are processed.
-
-#### Multiple Conditions
-
-Use lists for multiple conditions:
-
-```json
-{
-  "name": "Multi-Condition Item",
-  "type": "pip_package",
-  "source": "pip",
-  "package": "package-name",
-  "set_condition": ["condition1", "condition2"]
-}
-```
-
-#### Example: Platform-Specific Packages
-
-```json
-{
-  "items": [
-    {
-      "name": "PyTorch CPU (Portable Install)",
-      "type": "pip_package",
-      "source": "pip",
-      "package": "torch",
-      "match_condition": "comfyui_portable_install"
-    },
-    {
-      "name": "PyTorch CUDA (Git Install)",
-      "type": "pip_package",
-      "source": "pip",
-      "package": "torch",
-      "extra_index_url": "https://download.pytorch.org/whl/cu130",
-      "match_condition": "comfyui_git_install"
-    }
-  ]
-}
-```
-
-**See CONDITIONAL_PROCESSING.md for comprehensive examples and use cases.**
+**See CONDITIONAL_PROCESSING.md for comprehensive examples, advanced patterns, and troubleshooting.**
 
 ## Complete Example Manifest
 
@@ -715,7 +774,14 @@ This example demonstrates various features including conditional processing, adv
       "sha256": "31e35c80fc4829d14f90153f4c74cd59c90b779f6afe05a74cd6120b893f7e5b",
       "size_mb": 6938,
       "required": true,
-      "set_condition": "base_model_installed"
+      "conditions": {
+        "set_conditions": [
+          {
+            "condition": "base_model_installed",
+            "set_condition_when": "installed"
+          }
+        ]
+      }
     },
     {
       "name": "SDXL Refiner 1.0",
@@ -726,7 +792,12 @@ This example demonstrates various features including conditional processing, adv
       "path": "models/checkpoints/sd_xl_refiner_1.0.safetensors",
       "size_mb": 6075,
       "required": false,
-      "match_condition": "base_model_installed"
+      "conditions": {
+        "match_type": "any",
+        "match_conditions": [
+          { "condition": "base_model_installed" }
+        ]
+      }
     },
     {
       "name": "SDXL VAE",
@@ -765,8 +836,13 @@ This example demonstrates various features including conditional processing, adv
       "version": "2.5.1",
       "extra_index_url": "https://download.pytorch.org/whl/cu130",
       "uninstall_current": true,
-      "match_condition": "comfyui_git_install",
-      "required": false
+      "required": false,
+      "conditions": {
+        "match_type": "any",
+        "match_conditions": [
+          { "condition": "comfyui_git_install" }
+        ]
+      }
     },
     {
       "name": "Torchvision CUDA 13.0 (Git Install)",
@@ -776,8 +852,13 @@ This example demonstrates various features including conditional processing, adv
       "version": "0.20.1",
       "extra_index_url": "https://download.pytorch.org/whl/cu130",
       "uninstall_current": true,
-      "match_condition": "comfyui_git_install",
-      "required": false
+      "required": false,
+      "conditions": {
+        "match_type": "any",
+        "match_conditions": [
+          { "condition": "comfyui_git_install" }
+        ]
+      }
     },
     {
       "name": "NumPy",
@@ -806,12 +887,13 @@ This example demonstrates various features including conditional processing, adv
 ```
 
 **Conditional Features Demonstrated:**
-- `set_condition`: Base model sets a condition after installation
-- `match_condition`: Refiner only installs after base model
-- `comfyui_git_install`: PyTorch CUDA packages only for git-based installs
-- `uninstall_current`: Remove existing PyTorch before installing new version
-- `extra_index_url`: PyTorch CUDA wheels from custom index
-- `install_temp`: Bundled files from ZIP package
+- **set_conditions**: Base model sets condition after installation
+- **match_conditions**: Refiner only installs if base model installed
+- **match_type**: Demonstrates ANY logic for conditions
+- **comfyui_git_install**: PyTorch CUDA packages only for git-based installs
+- **uninstall_current**: Remove existing PyTorch before installing new version
+- **extra_index_url**: PyTorch CUDA wheels from custom index
+- **install_temp**: Bundled files from ZIP package
 
 ## Package Structure (ZIP)
 
