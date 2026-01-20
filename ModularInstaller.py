@@ -446,6 +446,14 @@ def main():
         else:
             conditions.add('comfyui_portable_install')
 
+        # Display detected OS and active conditions for debugging
+        print("\n" + "=" * 60)
+        print("CONDITIONAL PROCESSING")
+        print("=" * 60)
+        print(f"Detected OS: {sys.platform}")
+        print(f"Active Conditions: {sorted(conditions)}")
+        print("=" * 60 + "\n")
+
         handler = ManifestHandler(
             manifest_path=manifest_path,
             comfy_path=comfy_path,

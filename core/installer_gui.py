@@ -226,6 +226,16 @@ class InstallerThread(QThread):
             else:
                 conditions.add('comfyui_portable_install')
 
+            # Display detected OS and active conditions for debugging
+            self.log_signal.emit("")
+            self.log_signal.emit("=" * 60)
+            self.log_signal.emit("CONDITIONAL PROCESSING")
+            self.log_signal.emit("=" * 60)
+            self.log_signal.emit(f"Detected OS: {sys.platform}")
+            self.log_signal.emit(f"Active Conditions: {sorted(conditions)}")
+            self.log_signal.emit("=" * 60)
+            self.log_signal.emit("")
+
             handler = ManifestHandler(
                 manifest_path=manifest_path,
                 comfy_path=comfy_path,
