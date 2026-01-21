@@ -111,37 +111,79 @@ class InstallerThread(QThread):
                         self.log_signal.emit(msg)
                         print(msg)  # Also print to console
             else:
-                # User specified custom ComfyUI path - check for embedded Python
+                # User specified custom ComfyUI path
                 comfy_path = Path(self.config['comfy_path'])
 
-                # Try to find embedded Python at the specified path
-                install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path
+                # Determine install root (parent directory of ComfyUI)
+                install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path.parent
 
-                possible_python_paths = [
-                    install_root / "python_embeded" / "python.exe",
-                    install_root / "python_embedded" / "python.exe",
-                    comfy_path / ".." / "python_embeded" / "python.exe",
-                    comfy_path / ".." / "python_embedded" / "python.exe",
-                ]
+                # Create installer instance for the custom path
+                installer = ComfyUIInstaller(install_path=install_root)
 
-                python_executable = None
-                for py_path in possible_python_paths:
-                    resolved_path = py_path.resolve()
-                    if resolved_path.exists():
-                        python_executable = resolved_path
-                        msg = f"✓ Found embedded Python: {python_executable}"
+                # Check if ComfyUI exists at the specified path
+                comfyui_exists = (comfy_path / "main.py").exists() or (comfy_path / "comfyui" / "main.py").exists()
+
+                if not comfyui_exists:
+                    msg = f"✗ ComfyUI not found at {comfy_path}"
+                    self.log_signal.emit(msg)
+                    print(msg)
+
+                    # Install ComfyUI based on checkbox
+                    if self.config.get('git_install'):
+                        msg = "→ Installing ComfyUI from GitHub using conda..."
                         self.log_signal.emit(msg)
                         print(msg)
-                        break
+                        success, message, python_executable, python_type = installer.install_comfyui_git()
+                        if not success:
+                            self.finished_signal.emit(False, message)
+                            return
+                        self.log_signal.emit(f"✓ {message}")
+                        # Update comfy_path to the actual installation location
+                        comfy_path = installer.install_path / "ComfyUI"
+                    else:
+                        msg = "→ Installing ComfyUI portable..."
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        success, message = installer.install_comfyui()
+                        if not success:
+                            self.finished_signal.emit(False, message)
+                            return
+                        self.log_signal.emit(f"✓ {message}")
+                        # Get installation info for python executable
+                        info = installer.get_installation_info()
+                        comfy_path = info['comfyui_path']
+                        python_executable = info['python_executable']
+                else:
+                    msg = f"✓ ComfyUI found at {comfy_path}"
+                    self.log_signal.emit(msg)
+                    print(msg)
 
-                if not python_executable:
-                    msg = f"⚠ No embedded Python found at {comfy_path}"
-                    self.log_signal.emit(msg)
-                    print(msg)
-                    msg = f"  Will use system Python for pip installations"
-                    self.log_signal.emit(msg)
-                    print(msg)
-                    python_executable = None  # Will fall back to sys.executable
+                    # Try to find embedded Python at the existing installation
+                    possible_python_paths = [
+                        install_root / "python_embeded" / "python.exe",
+                        install_root / "python_embedded" / "python.exe",
+                        comfy_path / ".." / "python_embeded" / "python.exe",
+                        comfy_path / ".." / "python_embedded" / "python.exe",
+                    ]
+
+                    python_executable = None
+                    for py_path in possible_python_paths:
+                        resolved_path = py_path.resolve()
+                        if resolved_path.exists():
+                            python_executable = resolved_path
+                            msg = f"✓ Found embedded Python: {python_executable}"
+                            self.log_signal.emit(msg)
+                            print(msg)
+                            break
+
+                    if not python_executable:
+                        msg = f"⚠ No embedded Python found at {comfy_path}"
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        msg = f"  Will use system Python for pip installations"
+                        self.log_signal.emit(msg)
+                        print(msg)
+                        python_executable = None  # Will fall back to sys.executable
 
             # Process manifest
             manifest_path = Path(self.config['manifest_path'])
@@ -221,29 +263,20 @@ class InstallerThread(QThread):
                 conditions.add('os_mac')  # Alias for darwin
 
             # Add automatic conditions based on installation type
-            # Check if ComfyUI already exists at the target path
-            comfyui_exists = (comfy_path / "main.py").exists() or (comfy_path / "comfyui" / "main.py").exists()
+            # Determine if this is a git-based or portable installation
+            # Check for conda environment (git installs use conda)
+            has_conda_env = (comfy_path.parent / ".conda").exists() or (comfy_path.parent / "conda-meta").exists()
+            # Check for .git directory
+            has_git = (comfy_path / ".git").exists()
+            # Check for embedded Python (portable installs have this)
+            has_embedded_python = python_executable and "python_embed" in str(python_executable)
 
-            # Debug output
-            self.log_signal.emit(f"DEBUG: comfy_path = {comfy_path}")
-            self.log_signal.emit(f"DEBUG: main.py exists = {(comfy_path / 'main.py').exists()}")
-            self.log_signal.emit(f"DEBUG: comfyui/main.py exists = {(comfy_path / 'comfyui' / 'main.py').exists()}")
-            self.log_signal.emit(f"DEBUG: comfyui_exists = {comfyui_exists}")
-            self.log_signal.emit(f"DEBUG: custom comfy_path provided = {self.config.get('comfy_path')}")
-            self.log_signal.emit(f"DEBUG: git_install checkbox = {self.config.get('git_install')}")
-
-            if comfyui_exists and self.config.get('comfy_path'):
-                # Using existing installation (portable)
-                conditions.add('comfyui_portable_install')
-                self.log_signal.emit("DEBUG: Setting comfyui_portable_install (existing installation)")
-            elif self.config.get('git_install'):
-                # Git installation was requested (and presumably happened if ComfyUI didn't exist)
+            if has_conda_env or has_git or (self.config.get('git_install') and not has_embedded_python):
+                # This is a git-based installation
                 conditions.add('comfyui_git_install')
-                self.log_signal.emit("DEBUG: Setting comfyui_git_install (git checkbox checked)")
             else:
-                # Portable installation was requested
+                # This is a portable installation
                 conditions.add('comfyui_portable_install')
-                self.log_signal.emit("DEBUG: Setting comfyui_portable_install (default)")
 
             # Display detected OS and active conditions for debugging
             self.log_signal.emit("")
