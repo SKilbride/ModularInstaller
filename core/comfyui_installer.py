@@ -745,10 +745,10 @@ class ComfyUIInstaller:
                 return True, f"Using existing conda environment '{env_name}'", python_path
 
             # Create new environment with Python 3.13 (good compatibility with ComfyUI)
-            # Use conda-forge to avoid Anaconda TOS requirements
+            # Use conda-forge with --override-channels to avoid Anaconda TOS requirements
             self.log(f"Creating new conda environment with Python 3.13...")
             result = subprocess.run(
-                ['conda', 'create', '-n', env_name, 'python=3.13', '-c', 'conda-forge', '-y'],
+                ['conda', 'create', '-n', env_name, 'python=3.13', '-c', 'conda-forge', '--override-channels', '-y'],
                 capture_output=True,
                 text=True,
                 timeout=300
