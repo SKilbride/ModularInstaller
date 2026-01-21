@@ -54,17 +54,27 @@ def extract_manifest_from_zip(zip_path: Path, temp_dir: Path, comfy_path: Option
 
         print(f"✓ Manifest extracted to: {manifest_path}")
 
-        # Check for InstallTemp folder and extract it
-        install_temp_files = [f for f in zf.namelist() if f.startswith('InstallTemp/')]
+        # Check for InstallTemp or InstallerTemp folder and extract it
+        # Support both naming conventions for backwards compatibility
+        install_temp_files = [f for f in zf.namelist() if f.startswith('InstallTemp/') or f.startswith('InstallerTemp/')]
         if install_temp_files:
-            print(f"Found InstallTemp folder in package - extracting {len(install_temp_files)} files...")
-            install_temp_path = temp_dir / "InstallTemp"
+            # Determine which prefix is used
+            folder_name = "InstallerTemp" if any(f.startswith('InstallerTemp/') for f in install_temp_files) else "InstallTemp"
+            print(f"Found {folder_name} folder in package - extracting {len(install_temp_files)} files...")
+            install_temp_path = temp_dir / "InstallTemp"  # Always normalize to "InstallTemp"
 
-            # Extract all InstallTemp files
+            # Extract all files
             for file in install_temp_files:
                 zf.extract(file, temp_dir)
+                # If source was InstallerTemp, rename to InstallTemp for consistency
+                if file.startswith('InstallerTemp/'):
+                    source = temp_dir / file
+                    dest = temp_dir / file.replace('InstallerTemp/', 'InstallTemp/', 1)
+                    if source.exists():
+                        dest.parent.mkdir(parents=True, exist_ok=True)
+                        source.rename(dest)
 
-            print(f"✓ InstallTemp extracted to: {install_temp_path}")
+            print(f"✓ {folder_name} extracted to: {install_temp_path}")
 
         # Check for ComfyUI folder and merge it into installation
         comfyui_files = [f for f in zf.namelist() if f.startswith('ComfyUI/') and not f.startswith('ComfyUI/.')]
