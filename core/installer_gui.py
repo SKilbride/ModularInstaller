@@ -114,12 +114,6 @@ class InstallerThread(QThread):
                 # User specified custom ComfyUI path
                 comfy_path = Path(self.config['comfy_path'])
 
-                # Determine install root (parent directory of ComfyUI)
-                install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path.parent
-
-                # Create installer instance for the custom path
-                installer = ComfyUIInstaller(install_path=install_root)
-
                 # Check if ComfyUI exists at the specified path
                 comfyui_exists = (comfy_path / "main.py").exists() or (comfy_path / "comfyui" / "main.py").exists()
 
@@ -128,8 +122,22 @@ class InstallerThread(QThread):
                     self.log_signal.emit(msg)
                     print(msg)
 
-                    # Install ComfyUI based on checkbox
+                    # Determine install root based on path structure
+                    # Git install ALWAYS creates a "ComfyUI" subfolder
+                    # Portable can install to any path
                     if self.config.get('git_install'):
+                        # For git install: Use custom path as install_root if it doesn't end with "ComfyUI"
+                        # Otherwise use parent directory
+                        if comfy_path.name == "ComfyUI":
+                            install_root = comfy_path.parent
+                        else:
+                            # Custom path doesn't end with ComfyUI - git will create ComfyUI subfolder
+                            install_root = comfy_path
+                            msg = f"⚠ Git install will create ComfyUI subfolder at {install_root / 'ComfyUI'}"
+                            self.log_signal.emit(msg)
+                            print(msg)
+
+                        installer = ComfyUIInstaller(install_path=install_root)
                         msg = "→ Installing ComfyUI from GitHub using conda..."
                         self.log_signal.emit(msg)
                         print(msg)
@@ -141,6 +149,9 @@ class InstallerThread(QThread):
                         # Update comfy_path to the actual installation location
                         comfy_path = installer.install_path / "ComfyUI"
                     else:
+                        # For portable install: Can install directly to custom path
+                        install_root = comfy_path.parent if comfy_path.name == "ComfyUI" else comfy_path.parent
+                        installer = ComfyUIInstaller(install_path=install_root)
                         msg = "→ Installing ComfyUI portable..."
                         self.log_signal.emit(msg)
                         print(msg)
@@ -157,6 +168,9 @@ class InstallerThread(QThread):
                     msg = f"✓ ComfyUI found at {comfy_path}"
                     self.log_signal.emit(msg)
                     print(msg)
+
+                    # Determine install root for finding embedded Python
+                    install_root = comfy_path.parent
 
                     # Try to find embedded Python at the existing installation
                     possible_python_paths = [
