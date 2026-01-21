@@ -224,15 +224,26 @@ class InstallerThread(QThread):
             # Check if ComfyUI already exists at the target path
             comfyui_exists = (comfy_path / "main.py").exists() or (comfy_path / "comfyui" / "main.py").exists()
 
+            # Debug output
+            self.log_signal.emit(f"DEBUG: comfy_path = {comfy_path}")
+            self.log_signal.emit(f"DEBUG: main.py exists = {(comfy_path / 'main.py').exists()}")
+            self.log_signal.emit(f"DEBUG: comfyui/main.py exists = {(comfy_path / 'comfyui' / 'main.py').exists()}")
+            self.log_signal.emit(f"DEBUG: comfyui_exists = {comfyui_exists}")
+            self.log_signal.emit(f"DEBUG: custom comfy_path provided = {self.config.get('comfy_path')}")
+            self.log_signal.emit(f"DEBUG: git_install checkbox = {self.config.get('git_install')}")
+
             if comfyui_exists and self.config.get('comfy_path'):
                 # Using existing installation (portable)
                 conditions.add('comfyui_portable_install')
+                self.log_signal.emit("DEBUG: Setting comfyui_portable_install (existing installation)")
             elif self.config.get('git_install'):
                 # Git installation was requested (and presumably happened if ComfyUI didn't exist)
                 conditions.add('comfyui_git_install')
+                self.log_signal.emit("DEBUG: Setting comfyui_git_install (git checkbox checked)")
             else:
                 # Portable installation was requested
                 conditions.add('comfyui_portable_install')
+                self.log_signal.emit("DEBUG: Setting comfyui_portable_install (default)")
 
             # Display detected OS and active conditions for debugging
             self.log_signal.emit("")
