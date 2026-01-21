@@ -441,9 +441,17 @@ def main():
             conditions.add('os_mac')  # Alias for darwin
 
         # Add automatic conditions based on installation type
-        if use_git_install:
+        # Check if ComfyUI already exists at the target path
+        comfyui_exists = (comfy_path / "main.py").exists() or (comfy_path / "comfyui" / "main.py").exists()
+
+        if comfyui_exists and args.comfy_path:
+            # Using existing installation (portable)
+            conditions.add('comfyui_portable_install')
+        elif use_git_install:
+            # Git installation was requested (and presumably happened if ComfyUI didn't exist)
             conditions.add('comfyui_git_install')
         else:
+            # Portable installation was requested
             conditions.add('comfyui_portable_install')
 
         # Display detected OS and active conditions for debugging
