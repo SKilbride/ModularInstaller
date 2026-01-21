@@ -58,6 +58,17 @@ class ManifestHandler:
         # Conditional processing support
         self.conditions = conditions if conditions is not None else set()
 
+        # Log conditional processing info for debugging
+        if self.conditions:
+            self.log("")
+            self.log("=" * 60)
+            self.log("CONDITIONAL PROCESSING")
+            self.log("=" * 60)
+            self.log(f"Detected OS: {sys.platform}")
+            self.log(f"Active Conditions: {sorted(self.conditions)}")
+            self.log("=" * 60)
+            self.log("")
+
         # Track what was actually downloaded vs skipped
         self.downloaded_items = []
         self.skipped_items = []
