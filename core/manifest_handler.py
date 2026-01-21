@@ -1600,11 +1600,17 @@ class ManifestHandler:
                 self.downloaded_items.append(item)
             else:
                 error_msg = result.stderr if result.stderr else result.stdout
-                self.log(f"✗ Winget install failed: {error_msg}", "ERROR")
-                if item.get('required', False):
-                    raise subprocess.CalledProcessError(result.returncode, cmd, error_msg)
+
+                # Check if package is already installed (not actually an error)
+                if "already installed" in error_msg.lower() or "no available upgrade" in error_msg.lower():
+                    self.log(f"✓ {item['name']} is already installed (up to date)")
+                    self.downloaded_items.append(item)
                 else:
-                    self.log(f"⚠ Optional package {item['name']} failed to install", "WARNING")
+                    self.log(f"✗ Winget install failed: {error_msg}", "ERROR")
+                    if item.get('required', False):
+                        raise subprocess.CalledProcessError(result.returncode, cmd, error_msg)
+                    else:
+                        self.log(f"⚠ Optional package {item['name']} failed to install", "WARNING")
 
         except subprocess.TimeoutExpired:
             self.log(f"✗ Winget installation timed out: {item['name']}", "ERROR")
